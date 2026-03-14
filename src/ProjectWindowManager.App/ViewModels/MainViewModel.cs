@@ -1,8 +1,12 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Windows.Input;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using ProjectWindowManager.Core.Models;
 using ProjectWindowManager.Core.Services;
 using ProjectWindowManager.Core.Interfaces;
@@ -15,8 +19,10 @@ namespace ProjectWindowManager.App.ViewModels
         private readonly IWindowManagerService _windowManagerService;
         private Project? _selectedProject;
         private ManagedApplication? _activeApplication;
+        private readonly SemaphoreSlim _launchLock = new(1, 1);
 
         public ObservableCollection<Project> Projects { get; } = new();
+        public IntPtr HostHwnd { get; set; } = IntPtr.Zero;
 
         public Project? SelectedProject
         {
@@ -26,7 +32,7 @@ namespace ProjectWindowManager.App.ViewModels
                 _selectedProject = value;
                 OnPropertyChanged();
                 // When project changes, clear active application or set to first one
-                ActiveApplication = _selectedProject?.Applications.Count > 0 ? _selectedProject.Applications[0] : null;
+                ActiveApplication = _selectedProject?.Applications.FirstOrDefault();
             }
         }
 
@@ -35,6 +41,7 @@ namespace ProjectWindowManager.App.ViewModels
             get => _activeApplication;
             set
             {
+                if (_activeApplication == value) return;
                 _activeApplication = value;
                 OnPropertyChanged();
             }
@@ -43,6 +50,7 @@ namespace ProjectWindowManager.App.ViewModels
         public ICommand CreateProjectCommand { get; }
         public ICommand LaunchAppCommand { get; }
         public ICommand RelaunchAppCommand { get; }
+        public ICommand ClearApplicationsCommand { get; }
 
         public MainViewModel(ProjectService projectService, IWindowManagerService windowManagerService)
         {
@@ -54,23 +62,38 @@ namespace ProjectWindowManager.App.ViewModels
             CreateProjectCommand = new RelayCommand<string>(CreateProject);
             LaunchAppCommand = new RelayCommand<string>(LaunchApp, _ => SelectedProject != null);
             RelaunchAppCommand = new RelayCommand<ManagedApplication>(RelaunchApp, app => app?.State == ApplicationState.Inactive);
+            ClearApplicationsCommand = new RelayCommand<object>(_ => ClearApplications(), _ => SelectedProject != null);
+        }
+
+        private void ClearApplications()
+        {
+            if (SelectedProject == null) return;
+
+            ActiveApplication = null;
+            SelectedProject.Applications.Clear();
+            SaveAll();
         }
 
         private async void RelaunchApp(ManagedApplication? app)
         {
-            if (app == null) return;
+            if (app == null || HostHwnd == IntPtr.Zero) return;
 
+            await _launchLock.WaitAsync();
             try
             {
-                var hwnd = await _windowManagerService.LaunchAndHost(app.ExecutablePath, IntPtr.Zero);
-                app.State = ApplicationState.Active;
-                app.LastActiveHwnd = hwnd;
-                ActiveApplication = app;
-                SaveAll();
+                Console.WriteLine($"[MainViewModel] Relaunching {app.DisplayName}...");
+                var hwnd = await _windowManagerService.LaunchAndHost(app.ExecutablePath, HostHwnd);
+                if (hwnd != IntPtr.Zero)
+                {
+                    app.State = ApplicationState.Active;
+                    app.LastActiveHwnd = hwnd;
+                    ActiveApplication = app;
+                    SaveAll();
+                }
             }
-            catch
+            finally
             {
-                // Handle failure
+                _launchLock.Release();
             }
         }
 
@@ -86,28 +109,51 @@ namespace ProjectWindowManager.App.ViewModels
 
         private async void LaunchApp(string? exePath)
         {
-            if (string.IsNullOrWhiteSpace(exePath) || SelectedProject == null) return;
+            if (string.IsNullOrWhiteSpace(exePath) || SelectedProject == null || HostHwnd == IntPtr.Zero) return;
 
-            // 1. Add to collection immediately
-            var app = new ManagedApplication(SelectedProject.Id, exePath, System.IO.Path.GetFileNameWithoutExtension(exePath))
-            {
-                State = ApplicationState.Inactive // Initially inactive
-            };
-            SelectedProject.Applications.Add(app);
-            ActiveApplication = app;
-            SaveAll();
-
+            await _launchLock.WaitAsync();
             try
             {
-                // 2. Start hosting process asynchronously
-                var hwnd = await _windowManagerService.LaunchAndHost(exePath, IntPtr.Zero);
-                
-                if (hwnd != IntPtr.Zero)
+                // 1. Check if already exists in this project
+                var existing = SelectedProject.Applications.FirstOrDefault(a => a.ExecutablePath.Equals(exePath, StringComparison.OrdinalIgnoreCase));
+                if (existing != null)
                 {
-                    app.LastActiveHwnd = hwnd;
+                    Console.WriteLine($"[MainViewModel] App already exists: {exePath}");
+                    ActiveApplication = existing;
+                    if (existing.State == ApplicationState.Inactive)
+                    {
+                        // We are already inside a lock, so call the inner logic of Relaunch
+                        var hwnd = await _windowManagerService.LaunchAndHost(existing.ExecutablePath, HostHwnd);
+                        if (hwnd != IntPtr.Zero)
+                        {
+                            existing.State = ApplicationState.Active;
+                            existing.LastActiveHwnd = hwnd;
+                            OnPropertyChanged(nameof(ActiveApplication));
+                            SaveAll();
+                        }
+                    }
+                    return;
+                }
+
+                Console.WriteLine($"[MainViewModel] Launching new app: {exePath}");
+                
+                // 2. Add to collection immediately
+                var app = new ManagedApplication(SelectedProject.Id, exePath, System.IO.Path.GetFileNameWithoutExtension(exePath))
+                {
+                    State = ApplicationState.Inactive
+                };
+                SelectedProject.Applications.Add(app);
+                ActiveApplication = app;
+                SaveAll();
+
+                // 3. Start hosting process asynchronously
+                var hwndResult = await _windowManagerService.LaunchAndHost(exePath, HostHwnd);
+                
+                if (hwndResult != IntPtr.Zero)
+                {
+                    app.LastActiveHwnd = hwndResult;
                     app.State = ApplicationState.Active;
                     
-                    // Trigger a refresh of the ActiveApplication property to update the UI
                     if (ActiveApplication == app)
                     {
                         OnPropertyChanged(nameof(ActiveApplication));
@@ -115,15 +161,22 @@ namespace ProjectWindowManager.App.ViewModels
                     SaveAll();
                 }
             }
-            catch (Exception)
+            finally
             {
-                // Handle or log error
+                _launchLock.Release();
             }
         }
 
         public void SaveAll()
         {
-            _projectService.SaveProjects(new List<Project>(Projects));
+            try
+            {
+                _projectService.SaveProjects(new List<Project>(Projects));
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[MainViewModel] Save failed: {ex.Message}");
+            }
         }
 
         public event PropertyChangedEventHandler? PropertyChanged;

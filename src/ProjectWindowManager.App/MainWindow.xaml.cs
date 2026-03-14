@@ -24,6 +24,11 @@ namespace ProjectWindowManager.App
             var vm = new MainViewModel(projectService, _windowManagerService);
             vm.PropertyChanged += Vm_PropertyChanged;
             DataContext = vm;
+
+            // Ensure the VM knows about our host container
+            this.Loaded += (s, e) => {
+                vm.HostHwnd = ActiveWindowHost.Handle;
+            };
         }
 
         private async void Vm_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
@@ -39,10 +44,11 @@ namespace ProjectWindowManager.App
             var vm = (MainViewModel)DataContext;
             
             // Give a tiny bit of time for windows to settle if just launched
-            await Task.Delay(100);
+            await Task.Delay(150);
 
             if (vm.ActiveApplication?.State == ApplicationState.Active && vm.ActiveApplication.LastActiveHwnd != IntPtr.Zero)
             {
+                Console.WriteLine($"[MainWindow] Switching to HWND {vm.ActiveApplication.LastActiveHwnd}");
                 ActiveWindowHost.AttachWindow(vm.ActiveApplication.LastActiveHwnd);
             }
             else

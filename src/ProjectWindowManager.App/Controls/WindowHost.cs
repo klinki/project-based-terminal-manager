@@ -29,7 +29,15 @@ namespace ProjectWindowManager.App.Controls
 
         public void AttachWindow(IntPtr hwnd)
         {
-            if (hwnd == _currentlyHostedHwnd && hwnd != IntPtr.Zero) return;
+            // Verify if the window is still our child if we think we are hosting it
+            if (hwnd == _currentlyHostedHwnd && hwnd != IntPtr.Zero)
+            {
+                if (GetParent(hwnd) == Handle)
+                {
+                    return; // Already correctly hosted
+                }
+                Console.WriteLine($"[WindowHost] HWND {hwnd} lost its parent. Re-hosting...");
+            }
 
             // Unhost current if exists and changing
             if (_currentlyHostedHwnd != IntPtr.Zero && _currentlyHostedHwnd != hwnd)
@@ -78,7 +86,6 @@ namespace ProjectWindowManager.App.Controls
         {
             if (_childHwnd != IntPtr.Zero && Handle != IntPtr.Zero)
             {
-                // Add a small buffer or just use actual size
                 WindowManagerService.UpdateLayout(_childHwnd, 0, 0, (int)ActualWidth, (int)ActualHeight);
             }
         }

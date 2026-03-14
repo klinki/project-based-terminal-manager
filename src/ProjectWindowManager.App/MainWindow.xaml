@@ -47,6 +47,7 @@
             <!-- Header -->
             <StackPanel Orientation="Horizontal" Margin="10" Visibility="{Binding SelectedProject, Converter={StaticResource NullToVisibilityConverter}, ConverterParameter=Inverse}">
                 <Button Content="Launch App" Margin="0,0,10,0" Padding="10,5" Click="LaunchApp_Click"/>
+                <Button Content="Clear" Margin="0,0,10,0" Padding="10,5" Command="{Binding ClearApplicationsCommand}"/>
                 <TextBlock Text="{Binding SelectedProject.Name}" FontSize="16" VerticalAlignment="Center"/>
             </StackPanel>
 

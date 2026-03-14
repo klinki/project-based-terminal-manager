@@ -30,40 +30,55 @@ namespace ProjectWindowManager.Win32
         private static extern int DwmGetWindowAttribute(IntPtr hwnd, int dwAttribute, out int pvAttribute, int cbAttribute);
         private const int DWMWA_CLOAKED = 14;
 
+        [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true, CharSet = System.Runtime.InteropServices.CharSet.Auto)]
+        private static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
+
+        [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true, CharSet = System.Runtime.InteropServices.CharSet.Auto)]
+        private static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
+
         public void HostWindow(IntPtr childHwnd, IntPtr parentHwnd)
         {
             if (childHwnd == IntPtr.Zero || parentHwnd == IntPtr.Zero) return;
 
-            Console.WriteLine($"[WindowManagerService] Hosting HWND {childHwnd} in parent {parentHwnd}");
+            string cls = GetClassNameString(childHwnd);
+            bool isUwp = cls == "ApplicationFrameWindow";
 
-            // 1. Hide and Reparent
+            // If it's already hosted in THIS parent, don't do it again
+            if (GetParent(childHwnd) == parentHwnd) return;
+
+            Console.WriteLine($"[WindowManagerService] Hosting {cls} ({childHwnd}) in {parentHwnd}");
+
             ShowWindow(childHwnd, WindowShowStyle.SW_HIDE);
             SetParent(childHwnd, parentHwnd);
 
-            // 2. Clear all top-level styles and force child style
             uint style = (uint)GetWindowLong(childHwnd, WindowLongIndexFlags.GWL_STYLE);
-            style &= ~(WS_POPUP | WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU);
-            style |= WS_CHILD;
+            if (isUwp)
+            {
+                style |= WS_CHILD;
+                style &= ~WS_POPUP;
+            }
+            else
+            {
+                style &= ~(WS_POPUP | WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU);
+                style |= WS_CHILD;
+            }
             SetWindowLong(childHwnd, WindowLongIndexFlags.GWL_STYLE, (SetWindowLongFlags)style);
 
-            // 3. Clear extended styles and set toolwindow
             uint exStyle = (uint)GetWindowLong(childHwnd, WindowLongIndexFlags.GWL_EXSTYLE);
             exStyle |= WS_EX_TOOLWINDOW;
             SetWindowLong(childHwnd, WindowLongIndexFlags.GWL_EXSTYLE, (SetWindowLongFlags)exStyle);
 
-            // 4. Position child window to fill the parent's current client area
             PInvoke.RECT parentRect;
             GetClientRect(parentHwnd, out parentRect);
             
             SetWindowPos(childHwnd, IntPtr.Zero, 0, 0, parentRect.right - parentRect.left, parentRect.bottom - parentRect.top, 
                 SetWindowPosFlags.SWP_NOZORDER | SetWindowPosFlags.SWP_FRAMECHANGED | SetWindowPosFlags.SWP_SHOWWINDOW);
-            
-            Console.WriteLine("[WindowManagerService] Hosting applied successfully.");
         }
 
         public void UnhostWindow(IntPtr childHwnd)
         {
             if (childHwnd == IntPtr.Zero) return;
+            Console.WriteLine($"[WindowManagerService] Unhosting {childHwnd}");
             SetParent(childHwnd, IntPtr.Zero);
             
             uint style = (uint)GetWindowLong(childHwnd, WindowLongIndexFlags.GWL_STYLE);
@@ -84,12 +99,7 @@ namespace ProjectWindowManager.Win32
         {
             Console.WriteLine($"[WindowManagerService] Launching: {exePath}");
             
-            var psi = new ProcessStartInfo(exePath) 
-            { 
-                UseShellExecute = true,
-                WindowStyle = ProcessWindowStyle.Minimized
-            };
-            
+            var psi = new ProcessStartInfo(exePath) { UseShellExecute = true };
             var process = Process.Start(psi);
             if (process == null) return IntPtr.Zero;
 
@@ -97,7 +107,7 @@ namespace ProjectWindowManager.Win32
             int initialPid = process.Id;
             IntPtr hwnd = IntPtr.Zero;
 
-            for (int i = 0; i < 40; i++)
+            for (int i = 0; i < 60; i++)
             {
                 process.Refresh();
                 
@@ -108,12 +118,25 @@ namespace ProjectWindowManager.Win32
                 if (hwnd != IntPtr.Zero) break;
 
                 hwnd = FindWindowByProcessName(procName);
+                if (hwnd == IntPtr.Zero && procName.Equals("calc", StringComparison.OrdinalIgnoreCase))
+                {
+                    hwnd = FindWindowByProcessName("CalculatorApp");
+                    if (hwnd == IntPtr.Zero) hwnd = FindWindowByProcessName("Calculator");
+                }
+                
                 if (hwnd != IntPtr.Zero) break;
 
                 await Task.Delay(250);
             }
 
-            if (hwnd != IntPtr.Zero && parentHwnd != IntPtr.Zero)
+            Console.WriteLine($"[WindowManagerService] Capture HWND result: {hwnd}");
+            
+            // Note: We return HWND and the caller (MainViewModel) will eventually trigger property change
+            // which results in WindowHost.AttachWindow call.
+            // BUT, if we want instant hosting, we can call HostWindow here.
+            // However, to avoid the double-hosting reported by user, we should be careful.
+            
+            if (hwnd != IntPtr.Zero && parentHwnd != IntPtr.Zero) 
             {
                 HostWindow(hwnd, parentHwnd);
             }
@@ -148,12 +171,34 @@ namespace ProjectWindowManager.Win32
                 GetWindowThreadProcessId(hwnd, out int pid);
                 if (pids.Contains(pid) && IsValidTopLevelWindow(hwnd))
                 {
+                    string cls = GetClassNameString(hwnd);
+                    if (cls.Equals("ApplicationFrameWindow"))
+                    {
+                        var title = new StringBuilder(256);
+                        GetWindowText(hwnd, title, 256);
+                        string t = title.ToString();
+                        
+                        if (t.Contains(processName, StringComparison.OrdinalIgnoreCase) || 
+                            (processName.Equals("calc", StringComparison.OrdinalIgnoreCase) && t.Contains("Calculator", StringComparison.OrdinalIgnoreCase)))
+                        {
+                            found = hwnd;
+                            return false;
+                        }
+                        return true; 
+                    }
                     found = hwnd;
                     return false;
                 }
                 return true;
             }, IntPtr.Zero);
             return found;
+        }
+
+        private string GetClassNameString(IntPtr hwnd)
+        {
+            var sb = new StringBuilder(256);
+            GetClassName(hwnd, sb, 256);
+            return sb.ToString();
         }
 
         private bool IsValidTopLevelWindow(IntPtr hwnd)
