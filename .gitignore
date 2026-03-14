@@ -1,0 +1,50 @@
+# .NET Core/Standard/5+
+bin/
+obj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Visual Studio
+.vs/
+[Tt]est[Rr]esults/
+*.vspscc
+*.vssscc
+.buildlog
+*.aps
+*.ncb
+*.opendb
+*.sdf
+*.cachefile
+*.nosync
+*.dbmdl
+*.wmdb
+*.vshost.exe
+*.vshost.exe.config
+*.vshost.exe.manifest
+*.xml
+
+# User-specific files
+*.rsuser
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Packages
+*.nupkg
+**/packages/*
+!**/packages/build/
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.tmp
+.DS_Store
+Thumbs.db
+
+# Project Window Manager specific
+*.log
+.env*

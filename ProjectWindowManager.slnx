@@ -1,0 +1,7 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/ProjectWindowManager.App/ProjectWindowManager.App.csproj" />
+    <Project Path="src/ProjectWindowManager.Core/ProjectWindowManager.Core.csproj" />
+    <Project Path="src/ProjectWindowManager.Win32/ProjectWindowManager.Win32.csproj" />
+  </Folder>
+</Solution>
