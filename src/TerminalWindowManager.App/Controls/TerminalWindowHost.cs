@@ -47,6 +47,8 @@ public sealed class TerminalWindowHost : HwndHost
 
     protected override HandleRef BuildWindowCore(HandleRef hwndParent)
     {
+        var (pixelWidth, pixelHeight) = GetPixelSize();
+
         var hwnd = CreateWindowExW(
             0,
             "static",
@@ -54,8 +56,8 @@ public sealed class TerminalWindowHost : HwndHost
             WindowStyles.WsChild | WindowStyles.WsVisible | WindowStyles.WsClipChildren,
             0,
             0,
-            (int)Math.Max(1, ActualWidth),
-            (int)Math.Max(1, ActualHeight),
+            pixelWidth,
+            pixelHeight,
             hwndParent.Handle,
             IntPtr.Zero,
             IntPtr.Zero,
@@ -84,8 +86,23 @@ public sealed class TerminalWindowHost : HwndHost
     {
         if (_childHwnd != IntPtr.Zero && Handle != IntPtr.Zero && TerminalService is not null)
         {
-            TerminalService.UpdateLayout(_childHwnd, 0, 0, (int)ActualWidth, (int)ActualHeight);
+            var (pixelWidth, pixelHeight) = GetPixelSize();
+            TerminalService.UpdateLayout(_childHwnd, 0, 0, pixelWidth, pixelHeight);
         }
+    }
+
+    private (int Width, int Height) GetPixelSize()
+    {
+        var source = PresentationSource.FromVisual(this);
+        if (source?.CompositionTarget is null)
+        {
+            return ((int)Math.Max(1, ActualWidth), (int)Math.Max(1, ActualHeight));
+        }
+
+        var transform = source.CompositionTarget.TransformToDevice;
+        var pixelWidth = (int)Math.Max(1, Math.Round(ActualWidth * transform.M11));
+        var pixelHeight = (int)Math.Max(1, Math.Round(ActualHeight * transform.M22));
+        return (pixelWidth, pixelHeight);
     }
 
     [Flags]
