@@ -1,0 +1,23 @@
+README.md
+  cd41e7e2849865bb 1-52
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.12",
+  "base_commit_sha": "f2c6717c0c3d646d57f09dfed7cd40c0d72812e2",
+  "prompts": {
+    "cd41e7e2849865bb": {
+      "agent_id": {
+        "tool": "gemini",
+        "id": "32bf1df3-db57-4828-9362-9196b04c1b17",
+        "model": "gemini-3.1-pro-preview"
+      },
+      "human_author": "David Klingenberg <dklingenberg@gmail.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 52,
+      "overriden_lines": 0
+    }
+  }
+}
