@@ -9,6 +9,23 @@ namespace TerminalWindowManager.Terminal;
 
 public sealed class WindowsTerminalService : IWindowsTerminalService
 {
+    private const int GwlStyle = -16;
+    private const int GwlExStyle = -20;
+    private const int DwmwaCloaked = 14;
+    private const int WsExToolWindow = 0x00000080;
+
+    private const uint WsPopup = 0x80000000;
+    private const uint WsChild = 0x40000000;
+    private const uint WsCaption = 0x00C00000;
+    private const uint WsThickFrame = 0x00040000;
+    private const uint WsSysMenu = 0x00080000;
+    private const uint WsMinimizeBox = 0x00020000;
+    private const uint WsMaximizeBox = 0x00010000;
+
+    private const uint SwpNoZOrder = 0x0004;
+    private const uint SwpShowWindow = 0x0040;
+    private const uint SwpFrameChanged = 0x0020;
+
     private static readonly HashSet<string> KnownTerminalProcessNames = new(StringComparer.OrdinalIgnoreCase)
     {
         "WindowsTerminal",
@@ -16,68 +33,93 @@ public sealed class WindowsTerminalService : IWindowsTerminalService
         "wt"
     };
 
-    public async Task<IntPtr> LaunchProjectWindowAsync(TerminalProject project, CancellationToken cancellationToken = default)
+    public async Task<IntPtr> EnsureTerminalWindowAsync(TerminalProject project, ManagedTerminalTab terminal, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(project);
+        ArgumentNullException.ThrowIfNull(terminal);
 
-        var startupTab = project.Tabs.OrderBy(tab => tab.TabIndex).FirstOrDefault();
-        var title = startupTab is null ? project.Name : startupTab.Name;
-
-        var before = SnapshotTerminalWindows();
-        await RunTerminalCommandAsync(BuildLaunchStartInfo(project.WindowTarget, title, startupTab), cancellationToken);
-
-        var hwnd = await ResolveProjectWindowAsync(before, project, cancellationToken);
-        if (hwnd != IntPtr.Zero)
+        if (terminal.LastKnownWindowHwnd != IntPtr.Zero && IsWindow(terminal.LastKnownWindowHwnd))
         {
-            project.LastKnownWindowHwnd = hwnd;
+            return terminal.LastKnownWindowHwnd;
         }
 
-        if (startupTab is not null)
+        var before = SnapshotTerminalWindows();
+        await RunTerminalCommandAsync(BuildLaunchStartInfo(terminal), cancellationToken);
+
+        var hwnd = await ResolveTerminalWindowAsync(before, terminal, cancellationToken);
+        if (hwnd != IntPtr.Zero)
         {
-            startupTab.State = TerminalTabState.Launched;
+            terminal.LastKnownWindowHwnd = hwnd;
+            terminal.State = TerminalTabState.Hosted;
         }
 
         return hwnd;
     }
 
-    public async Task<IntPtr> LaunchTabAsync(TerminalProject project, ManagedTerminalTab tab, CancellationToken cancellationToken = default)
+    public void HostWindow(IntPtr childHwnd, IntPtr parentHwnd)
     {
-        ArgumentNullException.ThrowIfNull(project);
-        ArgumentNullException.ThrowIfNull(tab);
-
-        var before = SnapshotTerminalWindows();
-        await RunTerminalCommandAsync(BuildLaunchStartInfo(project.WindowTarget, tab.Name, tab), cancellationToken);
-
-        var hwnd = await ResolveProjectWindowAsync(before, project, cancellationToken);
-        if (hwnd != IntPtr.Zero)
+        if (childHwnd == IntPtr.Zero || parentHwnd == IntPtr.Zero)
         {
-            project.LastKnownWindowHwnd = hwnd;
+            return;
         }
 
-        tab.State = TerminalTabState.Launched;
-        return hwnd;
+        if (GetParent(childHwnd) == parentHwnd)
+        {
+            return;
+        }
+
+        ShowWindow(childHwnd, 0);
+        SetParent(childHwnd, parentHwnd);
+
+        var style = unchecked((uint)GetWindowLongPtr(childHwnd, GwlStyle).ToInt64());
+        style &= ~(WsPopup | WsCaption | WsThickFrame | WsMinimizeBox | WsMaximizeBox | WsSysMenu);
+        style |= WsChild;
+        SetWindowLongPtr(childHwnd, GwlStyle, new IntPtr(style));
+
+        var exStyle = unchecked((uint)GetWindowLongPtr(childHwnd, GwlExStyle).ToInt64());
+        exStyle |= WsExToolWindow;
+        SetWindowLongPtr(childHwnd, GwlExStyle, new IntPtr(exStyle));
+
+        GetClientRect(parentHwnd, out var rect);
+        SetWindowPos(
+            childHwnd,
+            IntPtr.Zero,
+            0,
+            0,
+            rect.Right - rect.Left,
+            rect.Bottom - rect.Top,
+            SwpNoZOrder | SwpFrameChanged | SwpShowWindow);
     }
 
-    public bool TryFocusProjectWindow(TerminalProject project)
+    public void UnhostWindow(IntPtr childHwnd)
     {
-        ArgumentNullException.ThrowIfNull(project);
-
-        if (project.LastKnownWindowHwnd != IntPtr.Zero && IsWindow(project.LastKnownWindowHwnd))
+        if (childHwnd == IntPtr.Zero || !IsWindow(childHwnd))
         {
-            return BringToFront(project.LastKnownWindowHwnd);
+            return;
         }
 
-        var recovered = TryFindWindowByProjectHint(project);
-        if (recovered == IntPtr.Zero)
-        {
-            return false;
-        }
+        SetParent(childHwnd, IntPtr.Zero);
 
-        project.LastKnownWindowHwnd = recovered;
-        return BringToFront(recovered);
+        var style = unchecked((uint)GetWindowLongPtr(childHwnd, GwlStyle).ToInt64());
+        style &= ~WsChild;
+        style |= WsPopup | WsCaption | WsThickFrame | WsSysMenu;
+        SetWindowLongPtr(childHwnd, GwlStyle, new IntPtr(style));
+
+        ShowWindow(childHwnd, 5);
+        SetWindowPos(childHwnd, IntPtr.Zero, 100, 100, 1200, 800, SwpNoZOrder | SwpFrameChanged | SwpShowWindow);
     }
 
-    private static ProcessStartInfo BuildLaunchStartInfo(string windowTarget, string title, ManagedTerminalTab? tab)
+    public void UpdateLayout(IntPtr childHwnd, int x, int y, int width, int height)
+    {
+        if (childHwnd == IntPtr.Zero || !IsWindow(childHwnd))
+        {
+            return;
+        }
+
+        SetWindowPos(childHwnd, IntPtr.Zero, x, y, width, height, SwpNoZOrder | SwpFrameChanged | SwpShowWindow);
+    }
+
+    private static ProcessStartInfo BuildLaunchStartInfo(ManagedTerminalTab terminal)
     {
         var startInfo = new ProcessStartInfo(ResolveTerminalExecutable())
         {
@@ -85,24 +127,21 @@ public sealed class WindowsTerminalService : IWindowsTerminalService
         };
 
         startInfo.ArgumentList.Add("-w");
-        startInfo.ArgumentList.Add(windowTarget);
+        startInfo.ArgumentList.Add(terminal.WindowTarget);
         startInfo.ArgumentList.Add("new-tab");
         startInfo.ArgumentList.Add("--title");
-        startInfo.ArgumentList.Add(title);
+        startInfo.ArgumentList.Add(terminal.Name);
 
-        if (tab is not null)
+        if (!string.IsNullOrWhiteSpace(terminal.WorkingDirectory))
         {
-            if (!string.IsNullOrWhiteSpace(tab.WorkingDirectory))
-            {
-                startInfo.ArgumentList.Add("-d");
-                startInfo.ArgumentList.Add(tab.WorkingDirectory);
-            }
+            startInfo.ArgumentList.Add("-d");
+            startInfo.ArgumentList.Add(terminal.WorkingDirectory);
+        }
 
-            if (!string.IsNullOrWhiteSpace(tab.ProfileName))
-            {
-                startInfo.ArgumentList.Add("-p");
-                startInfo.ArgumentList.Add(tab.ProfileName);
-            }
+        if (!string.IsNullOrWhiteSpace(terminal.ProfileName))
+        {
+            startInfo.ArgumentList.Add("-p");
+            startInfo.ArgumentList.Add(terminal.ProfileName);
         }
 
         return startInfo;
@@ -132,23 +171,18 @@ public sealed class WindowsTerminalService : IWindowsTerminalService
         }
     }
 
-    private static async Task<IntPtr> ResolveProjectWindowAsync(HashSet<IntPtr> before, TerminalProject project, CancellationToken cancellationToken)
+    private static async Task<IntPtr> ResolveTerminalWindowAsync(HashSet<IntPtr> before, ManagedTerminalTab terminal, CancellationToken cancellationToken)
     {
         await Task.Delay(350, cancellationToken);
 
         var after = SnapshotTerminalWindows();
-        var newlyCreatedWindow = after.Except(before).FirstOrDefault();
-        if (newlyCreatedWindow != IntPtr.Zero)
+        var newWindow = after.Except(before).FirstOrDefault();
+        if (newWindow != IntPtr.Zero)
         {
-            return newlyCreatedWindow;
+            return newWindow;
         }
 
-        if (project.LastKnownWindowHwnd != IntPtr.Zero && IsWindow(project.LastKnownWindowHwnd))
-        {
-            return project.LastKnownWindowHwnd;
-        }
-
-        return TryFindWindowByProjectHint(project);
+        return TryFindWindowByTerminalHint(terminal);
     }
 
     private static HashSet<IntPtr> SnapshotTerminalWindows()
@@ -157,13 +191,7 @@ public sealed class WindowsTerminalService : IWindowsTerminalService
 
         EnumWindows((hwnd, _) =>
         {
-            if (!IsWindowVisible(hwnd) || GetParent(hwnd) != IntPtr.Zero)
-            {
-                return true;
-            }
-
-            GetWindowThreadProcessId(hwnd, out var processId);
-            if (!IsKnownTerminalProcess(processId))
+            if (!IsValidTopLevelWindow(hwnd))
             {
                 return true;
             }
@@ -175,25 +203,19 @@ public sealed class WindowsTerminalService : IWindowsTerminalService
         return handles;
     }
 
-    private static IntPtr TryFindWindowByProjectHint(TerminalProject project)
+    private static IntPtr TryFindWindowByTerminalHint(ManagedTerminalTab terminal)
     {
         IntPtr match = IntPtr.Zero;
 
         EnumWindows((hwnd, _) =>
         {
-            if (!IsWindowVisible(hwnd) || GetParent(hwnd) != IntPtr.Zero)
-            {
-                return true;
-            }
-
-            GetWindowThreadProcessId(hwnd, out var processId);
-            if (!IsKnownTerminalProcess(processId))
+            if (!IsValidTopLevelWindow(hwnd))
             {
                 return true;
             }
 
             var title = GetWindowTitle(hwnd);
-            if (title.Contains(project.Name, StringComparison.OrdinalIgnoreCase))
+            if (title.Contains(terminal.Name, StringComparison.OrdinalIgnoreCase))
             {
                 match = hwnd;
                 return false;
@@ -203,6 +225,23 @@ public sealed class WindowsTerminalService : IWindowsTerminalService
         }, IntPtr.Zero);
 
         return match;
+    }
+
+    private static bool IsValidTopLevelWindow(IntPtr hwnd)
+    {
+        if (!IsWindowVisible(hwnd) || GetParent(hwnd) != IntPtr.Zero)
+        {
+            return false;
+        }
+
+        DwmGetWindowAttribute(hwnd, DwmwaCloaked, out var cloaked, sizeof(int));
+        if (cloaked != 0)
+        {
+            return false;
+        }
+
+        GetWindowThreadProcessId(hwnd, out var processId);
+        return IsKnownTerminalProcess(processId);
     }
 
     private static string GetWindowTitle(IntPtr hwnd)
@@ -229,22 +268,14 @@ public sealed class WindowsTerminalService : IWindowsTerminalService
         }
     }
 
-    private static bool BringToFront(IntPtr hwnd)
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Rect
     {
-        if (IsIconic(hwnd))
-        {
-            ShowWindow(hwnd, SwRestore);
-        }
-        else
-        {
-            ShowWindow(hwnd, SwShow);
-        }
-
-        return SetForegroundWindow(hwnd);
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
     }
-
-    private const int SwShow = 5;
-    private const int SwRestore = 9;
 
     [DllImport("user32.dll")]
     private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
@@ -267,11 +298,23 @@ public sealed class WindowsTerminalService : IWindowsTerminalService
     private static extern bool IsWindow(IntPtr hWnd);
 
     [DllImport("user32.dll")]
-    private static extern bool SetForegroundWindow(IntPtr hWnd);
-
-    [DllImport("user32.dll")]
     private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 
     [DllImport("user32.dll")]
-    private static extern bool IsIconic(IntPtr hWnd);
+    private static extern IntPtr SetParent(IntPtr hWndChild, IntPtr hWndNewParent);
+
+    [DllImport("user32.dll")]
+    private static extern bool GetClientRect(IntPtr hWnd, out Rect lpRect);
+
+    [DllImport("user32.dll")]
+    private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint uFlags);
+
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
+    private static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);
+
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")]
+    private static extern IntPtr SetWindowLongPtr(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
+
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmGetWindowAttribute(IntPtr hwnd, int dwAttribute, out int pvAttribute, int cbAttribute);
 }

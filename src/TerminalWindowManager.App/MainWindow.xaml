@@ -3,15 +3,17 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:controls="clr-namespace:TerminalWindowManager.App.Controls"
+        xmlns:models="clr-namespace:TerminalWindowManager.Core.Models;assembly=TerminalWindowManager.Core"
         mc:Ignorable="d"
         Title="Terminal Window Manager"
-        Height="760"
-        Width="1220"
-        MinHeight="640"
-        MinWidth="980">
+        Height="780"
+        Width="1280"
+        MinHeight="680"
+        MinWidth="1080">
     <Grid>
         <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="260" />
+            <ColumnDefinition Width="320" />
             <ColumnDefinition Width="*" />
         </Grid.ColumnDefinitions>
 
@@ -24,17 +26,32 @@
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
                     <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
 
-                <TextBlock Text="Projects"
+                <TextBlock Text="Projects and terminals"
                            FontSize="20"
                            FontWeight="SemiBold"
                            Margin="0,0,0,12" />
 
-                <ListBox Grid.Row="1"
-                         ItemsSource="{Binding Projects}"
-                         SelectedItem="{Binding SelectedProject}"
-                         DisplayMemberPath="Name" />
+                <TreeView x:Name="ProjectTree"
+                          Grid.Row="1"
+                          SelectedItemChanged="ProjectTree_SelectedItemChanged">
+                    <TreeView.Resources>
+                        <HierarchicalDataTemplate DataType="{x:Type models:TerminalProject}"
+                                                  ItemsSource="{Binding Tabs}">
+                            <TextBlock Text="{Binding Name}"
+                                       FontWeight="SemiBold" />
+                        </HierarchicalDataTemplate>
+
+                        <DataTemplate DataType="{x:Type models:ManagedTerminalTab}">
+                            <TextBlock Text="{Binding Name}" />
+                        </DataTemplate>
+                    </TreeView.Resources>
+                    <TreeView.ItemsSource>
+                        <Binding Path="Projects" />
+                    </TreeView.ItemsSource>
+                </TreeView>
 
                 <StackPanel Grid.Row="2"
                             Margin="0,12,0,0">
@@ -47,6 +64,54 @@
                             Margin="0,8,0,0"
                             Padding="10,6" />
                 </StackPanel>
+
+                <GroupBox Grid.Row="3"
+                          Header="Add terminal to selected project"
+                          Margin="0,12,0,0">
+                    <Grid Margin="10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="96" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <TextBlock Text="Name"
+                                   VerticalAlignment="Center" />
+                        <TextBox Grid.Column="1"
+                                 Text="{Binding NewTerminalName, UpdateSourceTrigger=PropertyChanged}" />
+
+                        <TextBlock Grid.Row="1"
+                                   Text="Directory"
+                                   Margin="0,10,0,0"
+                                   VerticalAlignment="Center" />
+                        <TextBox Grid.Row="1"
+                                 Grid.Column="1"
+                                 Margin="0,10,0,0"
+                                 Text="{Binding NewTerminalWorkingDirectory, UpdateSourceTrigger=PropertyChanged}" />
+
+                        <TextBlock Grid.Row="2"
+                                   Text="Profile"
+                                   Margin="0,10,0,0"
+                                   VerticalAlignment="Center" />
+                        <TextBox Grid.Row="2"
+                                 Grid.Column="1"
+                                 Margin="0,10,0,0"
+                                 Text="{Binding NewTerminalProfileName, UpdateSourceTrigger=PropertyChanged}" />
+
+                        <Button Grid.Row="3"
+                                Grid.Column="1"
+                                Content="Add terminal"
+                                Command="{Binding AddTerminalCommand}"
+                                Margin="0,14,0,0"
+                                Padding="12,6"
+                                HorizontalAlignment="Left" />
+                    </Grid>
+                </GroupBox>
             </Grid>
         </Border>
 
@@ -56,7 +121,6 @@
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
-                <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
             <Border Background="#FAFAFA"
@@ -65,28 +129,23 @@
                     CornerRadius="6"
                     Padding="14">
                 <StackPanel>
-                    <TextBlock Text="{Binding SelectedProject.Name, TargetNullValue=Select a project to begin}"
+                    <TextBlock Text="{Binding SelectedTerminal.Name, TargetNullValue=Select a terminal from the tree}"
                                FontSize="22"
                                FontWeight="SemiBold" />
                     <TextBlock Margin="0,6,0,0"
                                Foreground="DimGray"
-                               Text="{Binding SelectedProject.WindowTarget, TargetNullValue=Window target: -, StringFormat=Window target: {0}}" />
+                               Text="{Binding SelectedProject.Name, TargetNullValue=Project: -, StringFormat=Project: {0}}" />
+                    <TextBlock Margin="0,6,0,0"
+                               Foreground="DimGray"
+                               Text="{Binding SelectedTerminal.WorkingDirectory, TargetNullValue=Working directory: -, StringFormat=Working directory: {0}}" />
                     <TextBlock Margin="0,10,0,0"
                                Foreground="#4D4D4D"
                                TextWrapping="Wrap"
-                               Text="This proof of concept launches named Windows Terminal windows and appends tabs into them. It does not embed Terminal content, and focus recovery is best-effort for windows launched from this app." />
+                               Text="Selecting a terminal launches or reconnects a dedicated Windows Terminal window and hosts it inside this frame. This keeps the project tree available while you switch terminals." />
 
                     <WrapPanel Margin="0,14,0,0">
-                        <Button Content="Open project window"
-                                Command="{Binding LaunchProjectWindowCommand}"
-                                Margin="0,0,10,0"
-                                Padding="12,6" />
-                        <Button Content="Focus project window"
-                                Command="{Binding FocusProjectWindowCommand}"
-                                Margin="0,0,10,0"
-                                Padding="12,6" />
-                        <Button Content="Open all tabs"
-                                Command="{Binding LaunchAllTabsCommand}"
+                        <Button Content="Reload selected terminal"
+                                Click="ReloadSelectedTerminal_Click"
                                 Padding="12,6" />
                     </WrapPanel>
                 </StackPanel>
@@ -98,145 +157,27 @@
                        TextWrapping="Wrap"
                        Text="{Binding StatusMessage}" />
 
-            <Grid Grid.Row="2">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="360" />
-                    <ColumnDefinition Width="*" />
-                </Grid.ColumnDefinitions>
+            <Border Grid.Row="2"
+                    Background="Black"
+                    BorderBrush="#1E1E1E"
+                    BorderThickness="1"
+                    CornerRadius="6"
+                    Padding="6">
+                <Grid>
+                    <controls:TerminalWindowHost x:Name="ActiveTerminalHost" />
 
-                <GroupBox Header="Configured terminal tabs"
-                          Margin="0,0,12,0">
-                    <ListBox ItemsSource="{Binding SelectedProject.Tabs}"
-                             SelectedItem="{Binding SelectedTab}">
-                        <ListBox.ItemTemplate>
-                            <DataTemplate>
-                                <StackPanel Margin="4">
-                                    <TextBlock FontWeight="SemiBold"
-                                               Text="{Binding DisplayLabel}" />
-                                    <TextBlock FontSize="12"
-                                               Foreground="DimGray"
-                                               Text="{Binding WorkingDirectory}"
-                                               TextTrimming="CharacterEllipsis" />
-                                </StackPanel>
-                            </DataTemplate>
-                        </ListBox.ItemTemplate>
-                    </ListBox>
-                </GroupBox>
-
-                <GroupBox Grid.Column="1"
-                          Header="Selected tab details">
-                    <Grid Margin="10">
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="*" />
-                        </Grid.RowDefinitions>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="160" />
-                            <ColumnDefinition Width="*" />
-                        </Grid.ColumnDefinitions>
-
-                        <TextBlock Text="Name"
-                                   FontWeight="SemiBold" />
-                        <TextBlock Grid.Column="1"
-                                   Text="{Binding SelectedTab.Name, TargetNullValue=-}" />
-
-                        <TextBlock Grid.Row="1"
-                                   Text="Working directory"
-                                   FontWeight="SemiBold"
-                                   Margin="0,10,0,0" />
-                        <TextBlock Grid.Row="1"
-                                   Grid.Column="1"
-                                   Margin="0,10,0,0"
-                                   TextWrapping="Wrap"
-                                   Text="{Binding SelectedTab.WorkingDirectory, TargetNullValue=-}" />
-
-                        <TextBlock Grid.Row="2"
-                                   Text="Profile"
-                                   FontWeight="SemiBold"
-                                   Margin="0,10,0,0" />
-                        <TextBlock Grid.Row="2"
-                                   Grid.Column="1"
-                                   Margin="0,10,0,0"
-                                   Text="{Binding SelectedTab.ProfileName, TargetNullValue=(default)}" />
-
-                        <TextBlock Grid.Row="3"
-                                   Text="Launch state"
-                                   FontWeight="SemiBold"
-                                   Margin="0,10,0,0" />
-                        <TextBlock Grid.Row="3"
-                                   Grid.Column="1"
-                                   Margin="0,10,0,0"
-                                   Text="{Binding SelectedTab.State, TargetNullValue=-}" />
-
-                        <WrapPanel Grid.Row="4"
-                                   Grid.ColumnSpan="2"
-                                   Margin="0,18,0,0">
-                            <Button Content="Launch selected tab"
-                                    Command="{Binding LaunchSelectedTabCommand}"
-                                    Padding="12,6" />
-                        </WrapPanel>
-
-                        <TextBlock Grid.Row="5"
-                                   Grid.ColumnSpan="2"
-                                   Margin="0,18,0,0"
-                                   Foreground="DimGray"
-                                   TextWrapping="Wrap"
-                                   Text="Tab focus is intentionally conservative in this first POC. Launch commands append tabs into the project's named Terminal window, and the app focuses the project window itself when possible." />
-                    </Grid>
-                </GroupBox>
-            </Grid>
-
-            <GroupBox Grid.Row="3"
-                      Header="Add a tab to the selected project"
-                      Margin="0,14,0,0">
-                <Grid Margin="10">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="140" />
-                        <ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                    </Grid.RowDefinitions>
-
-                    <TextBlock Text="Tab name"
-                               VerticalAlignment="Center" />
-                    <TextBox Grid.Column="1"
-                             Text="{Binding NewTabName, UpdateSourceTrigger=PropertyChanged}" />
-
-                    <TextBlock Grid.Row="1"
-                               Text="Working directory"
-                               Margin="0,10,0,0"
-                               VerticalAlignment="Center" />
-                    <TextBox Grid.Row="1"
-                             Grid.Column="1"
-                             Margin="0,10,0,0"
-                             Text="{Binding NewTabWorkingDirectory, UpdateSourceTrigger=PropertyChanged}" />
-
-                    <TextBlock Grid.Row="2"
-                               Text="Profile (optional)"
-                               Margin="0,10,0,0"
-                               VerticalAlignment="Center" />
-                    <TextBox Grid.Row="2"
-                             Grid.Column="1"
-                             Margin="0,10,0,0"
-                             Text="{Binding NewTabProfileName, UpdateSourceTrigger=PropertyChanged}" />
-
-                    <Button Grid.Row="3"
-                            Grid.Column="1"
-                            Content="Add tab"
-                            Command="{Binding AddTabCommand}"
-                            Margin="0,14,0,0"
-                            Padding="12,6"
-                            HorizontalAlignment="Left" />
+                    <TextBlock x:Name="EmptyFrameMessage"
+                               Margin="20"
+                               HorizontalAlignment="Center"
+                               VerticalAlignment="Center"
+                               Foreground="#D0D0D0"
+                               FontSize="16"
+                               TextWrapping="Wrap"
+                               TextAlignment="Center"
+                               IsHitTestVisible="False"
+                               Text="Pick a terminal in the tree to host it here." />
                 </Grid>
-            </GroupBox>
+            </Border>
         </Grid>
     </Grid>
 </Window>

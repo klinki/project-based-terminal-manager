@@ -14,33 +14,25 @@ public sealed class MainViewModel : ObservableObject
     private readonly SemaphoreSlim _launchLock = new(1, 1);
 
     private TerminalProject? _selectedProject;
-    private ManagedTerminalTab? _selectedTab;
+    private ManagedTerminalTab? _selectedTerminal;
     private string _newProjectName = string.Empty;
-    private string _newTabName = string.Empty;
-    private string _newTabWorkingDirectory;
-    private string _newTabProfileName = string.Empty;
-    private string _statusMessage = "Create a project, add one or more tab definitions, then launch them into a named Windows Terminal window.";
+    private string _newTerminalName = string.Empty;
+    private string _newTerminalWorkingDirectory;
+    private string _newTerminalProfileName = string.Empty;
+    private string _statusMessage = "Create projects, add terminals beneath them, then switch terminals from the tree on the left.";
 
     public ObservableCollection<TerminalProject> Projects { get; }
 
     public TerminalProject? SelectedProject
     {
         get => _selectedProject;
-        set
-        {
-            if (!SetProperty(ref _selectedProject, value))
-            {
-                return;
-            }
-
-            SelectedTab = value?.Tabs.OrderBy(tab => tab.TabIndex).FirstOrDefault();
-        }
+        set => SetProperty(ref _selectedProject, value);
     }
 
-    public ManagedTerminalTab? SelectedTab
+    public ManagedTerminalTab? SelectedTerminal
     {
-        get => _selectedTab;
-        set => SetProperty(ref _selectedTab, value);
+        get => _selectedTerminal;
+        set => SetProperty(ref _selectedTerminal, value);
     }
 
     public string NewProjectName
@@ -49,22 +41,22 @@ public sealed class MainViewModel : ObservableObject
         set => SetProperty(ref _newProjectName, value);
     }
 
-    public string NewTabName
+    public string NewTerminalName
     {
-        get => _newTabName;
-        set => SetProperty(ref _newTabName, value);
+        get => _newTerminalName;
+        set => SetProperty(ref _newTerminalName, value);
     }
 
-    public string NewTabWorkingDirectory
+    public string NewTerminalWorkingDirectory
     {
-        get => _newTabWorkingDirectory;
-        set => SetProperty(ref _newTabWorkingDirectory, value);
+        get => _newTerminalWorkingDirectory;
+        set => SetProperty(ref _newTerminalWorkingDirectory, value);
     }
 
-    public string NewTabProfileName
+    public string NewTerminalProfileName
     {
-        get => _newTabProfileName;
-        set => SetProperty(ref _newTabProfileName, value);
+        get => _newTerminalProfileName;
+        set => SetProperty(ref _newTerminalProfileName, value);
     }
 
     public string StatusMessage
@@ -74,34 +66,81 @@ public sealed class MainViewModel : ObservableObject
     }
 
     public ICommand CreateProjectCommand { get; }
-    public ICommand AddTabCommand { get; }
-    public ICommand LaunchProjectWindowCommand { get; }
-    public ICommand FocusProjectWindowCommand { get; }
-    public ICommand LaunchSelectedTabCommand { get; }
-    public ICommand LaunchAllTabsCommand { get; }
+    public ICommand AddTerminalCommand { get; }
 
     public MainViewModel(ProjectCatalogService projectCatalogService, IWindowsTerminalService windowsTerminalService)
     {
         _projectCatalogService = projectCatalogService;
         _windowsTerminalService = windowsTerminalService;
-        _newTabWorkingDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        _newTerminalWorkingDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
 
         Projects = new ObservableCollection<TerminalProject>(_projectCatalogService.LoadProjects());
 
+        foreach (var terminal in Projects.SelectMany(project => project.Tabs).Where(terminal => string.IsNullOrWhiteSpace(terminal.WindowTarget)))
+        {
+            terminal.WindowTarget = ManagedTerminalTab.CreateWindowTarget(terminal.Name, terminal.Id);
+        }
+
         CreateProjectCommand = new RelayCommand(CreateProject, () => !string.IsNullOrWhiteSpace(NewProjectName));
-        AddTabCommand = new RelayCommand(AddTab, () => SelectedProject is not null && !string.IsNullOrWhiteSpace(NewTabName) && !string.IsNullOrWhiteSpace(NewTabWorkingDirectory));
-        LaunchProjectWindowCommand = new RelayCommand(LaunchProjectWindow, () => SelectedProject is not null);
-        FocusProjectWindowCommand = new RelayCommand(FocusProjectWindow, () => SelectedProject is not null);
-        LaunchSelectedTabCommand = new RelayCommand(LaunchSelectedTab, () => SelectedProject is not null && SelectedTab is not null);
-        LaunchAllTabsCommand = new RelayCommand(LaunchAllTabs, () => SelectedProject is not null && SelectedProject.Tabs.Count > 0);
+        AddTerminalCommand = new RelayCommand(AddTerminal, () => SelectedProject is not null && !string.IsNullOrWhiteSpace(NewTerminalName) && !string.IsNullOrWhiteSpace(NewTerminalWorkingDirectory));
 
         SelectedProject = Projects.FirstOrDefault();
+        SelectedTerminal = SelectedProject?.Tabs.OrderBy(tab => tab.TabIndex).FirstOrDefault();
     }
 
     protected override void OnPropertyChanged(string? propertyName = null)
     {
         base.OnPropertyChanged(propertyName);
         CommandManager.InvalidateRequerySuggested();
+    }
+
+    public async Task<IntPtr> ActivateTerminalAsync(ManagedTerminalTab terminal)
+    {
+        ArgumentNullException.ThrowIfNull(terminal);
+
+        var project = Projects.FirstOrDefault(candidate => candidate.Id == terminal.ProjectId);
+        if (project is null)
+        {
+            StatusMessage = "The selected terminal is no longer attached to a known project.";
+            return IntPtr.Zero;
+        }
+
+        SelectedProject = project;
+        SelectedTerminal = terminal;
+
+        await _launchLock.WaitAsync();
+        try
+        {
+            var hwnd = await _windowsTerminalService.EnsureTerminalWindowAsync(project, terminal, CancellationToken.None);
+            if (hwnd == IntPtr.Zero)
+            {
+                StatusMessage = $"Unable to locate or launch '{terminal.Name}'.";
+                return IntPtr.Zero;
+            }
+
+            foreach (var candidate in Projects.SelectMany(item => item.Tabs))
+            {
+                if (!ReferenceEquals(candidate, terminal))
+                {
+                    candidate.State = TerminalTabState.Configured;
+                }
+            }
+
+            terminal.State = TerminalTabState.Hosted;
+            terminal.LastKnownWindowHwnd = hwnd;
+            SaveProjects();
+            StatusMessage = $"Showing '{terminal.Name}' from '{project.Name}' inside the Terminal Window Manager frame.";
+            return hwnd;
+        }
+        catch (InvalidOperationException ex)
+        {
+            StatusMessage = ex.Message;
+            return IntPtr.Zero;
+        }
+        finally
+        {
+            _launchLock.Release();
+        }
     }
 
     private void CreateProject()
@@ -116,26 +155,27 @@ public sealed class MainViewModel : ObservableObject
         var project = new TerminalProject(name);
         Projects.Add(project);
         SelectedProject = project;
+        SelectedTerminal = null;
         NewProjectName = string.Empty;
         SaveProjects();
-        StatusMessage = $"Created '{project.Name}' with window target '{project.WindowTarget}'.";
+        StatusMessage = $"Created project '{project.Name}'.";
     }
 
-    private void AddTab()
+    private void AddTerminal()
     {
         if (SelectedProject is null)
         {
-            StatusMessage = "Select a project before adding a tab.";
+            StatusMessage = "Select a project before adding a terminal.";
             return;
         }
 
-        var name = NewTabName.Trim();
-        var workingDirectory = NewTabWorkingDirectory.Trim();
-        var profileName = NewTabProfileName.Trim();
+        var name = NewTerminalName.Trim();
+        var workingDirectory = NewTerminalWorkingDirectory.Trim();
+        var profileName = NewTerminalProfileName.Trim();
 
         if (string.IsNullOrWhiteSpace(name))
         {
-            StatusMessage = "Enter a tab name first.";
+            StatusMessage = "Enter a terminal name first.";
             return;
         }
 
@@ -145,117 +185,19 @@ public sealed class MainViewModel : ObservableObject
             return;
         }
 
-        var tab = new ManagedTerminalTab(
+        var terminal = new ManagedTerminalTab(
             SelectedProject.Id,
             SelectedProject.Tabs.Count,
             name,
             workingDirectory,
             string.IsNullOrWhiteSpace(profileName) ? null : profileName);
 
-        SelectedProject.Tabs.Add(tab);
-        SelectedTab = tab;
-        NewTabName = string.Empty;
-        NewTabProfileName = string.Empty;
+        SelectedProject.Tabs.Add(terminal);
+        SelectedTerminal = terminal;
+        NewTerminalName = string.Empty;
+        NewTerminalProfileName = string.Empty;
         SaveProjects();
-        StatusMessage = $"Added '{tab.Name}' to '{SelectedProject.Name}'.";
-    }
-
-    private async void LaunchProjectWindow()
-    {
-        if (SelectedProject is null)
-        {
-            StatusMessage = "Select a project before launching it.";
-            return;
-        }
-
-        await LaunchAsync(async cancellationToken =>
-        {
-            var hwnd = await _windowsTerminalService.LaunchProjectWindowAsync(SelectedProject, cancellationToken);
-            StatusMessage = hwnd != IntPtr.Zero
-                ? $"Launched '{SelectedProject.Name}'. Focus will work while this app remembers the window handle."
-                : $"Launched '{SelectedProject.Name}', but could not capture the native window handle.";
-        });
-    }
-
-    private void FocusProjectWindow()
-    {
-        if (SelectedProject is null)
-        {
-            StatusMessage = "Select a project before focusing it.";
-            return;
-        }
-
-        if (_windowsTerminalService.TryFocusProjectWindow(SelectedProject))
-        {
-            StatusMessage = $"Focused the Windows Terminal window for '{SelectedProject.Name}'.";
-        }
-        else
-        {
-            StatusMessage = $"Could not find an open Windows Terminal window for '{SelectedProject.Name}'. Launch it again from this app first.";
-        }
-    }
-
-    private async void LaunchSelectedTab()
-    {
-        if (SelectedProject is null || SelectedTab is null)
-        {
-            StatusMessage = "Select a project tab before launching it.";
-            return;
-        }
-
-        await LaunchAsync(async cancellationToken =>
-        {
-            var hwnd = await _windowsTerminalService.LaunchTabAsync(SelectedProject, SelectedTab, cancellationToken);
-            StatusMessage = hwnd != IntPtr.Zero
-                ? $"Launched '{SelectedTab.Name}' into '{SelectedProject.Name}'."
-                : $"Launched '{SelectedTab.Name}', but window handle capture was inconclusive.";
-
-            SaveProjects();
-        });
-    }
-
-    private async void LaunchAllTabs()
-    {
-        if (SelectedProject is null)
-        {
-            StatusMessage = "Select a project before launching its tabs.";
-            return;
-        }
-
-        if (SelectedProject.Tabs.Count == 0)
-        {
-            StatusMessage = "Add at least one configured tab before launching the project window.";
-            return;
-        }
-
-        await LaunchAsync(async cancellationToken =>
-        {
-            foreach (var tab in SelectedProject.Tabs.OrderBy(tab => tab.TabIndex))
-            {
-                await _windowsTerminalService.LaunchTabAsync(SelectedProject, tab, cancellationToken);
-                await Task.Delay(200, cancellationToken);
-            }
-
-            SaveProjects();
-            StatusMessage = $"Opened {SelectedProject.Tabs.Count} tab(s) for '{SelectedProject.Name}'. This proof of concept appends tabs; close the project window to reset its layout.";
-        });
-    }
-
-    private async Task LaunchAsync(Func<CancellationToken, Task> action)
-    {
-        await _launchLock.WaitAsync();
-        try
-        {
-            await action(CancellationToken.None);
-        }
-        catch (InvalidOperationException ex)
-        {
-            StatusMessage = ex.Message;
-        }
-        finally
-        {
-            _launchLock.Release();
-        }
+        StatusMessage = $"Added terminal '{terminal.Name}' under '{SelectedProject.Name}'.";
     }
 
     private void SaveProjects()
