@@ -92,39 +92,49 @@ function getRendererRpc() {
 app.innerHTML = `
 	<div class="app-shell">
 		<aside class="sidebar">
-			<section class="panel">
-				<div class="panel-content">
-					<h1 class="heading">Projects</h1>
-					<p class="subheading">Tree-based navigation for live terminal sessions</p>
-				</div>
-			</section>
+			<div class="sidebar-nav">
+				<button class="nav-item">
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+					<span>New thread</span>
+				</button>
+				<button class="nav-item">
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+					<span>Automations</span>
+				</button>
+				<button class="nav-item">
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+					<span>Skills</span>
+				</button>
+			</div>
 
-			<section class="panel">
-				<div class="panel-content form-grid">
-					<h2 class="section-heading">Create project</h2>
-					<label class="form-label" for="project-name">Project name</label>
-					<input id="project-name" type="text" placeholder="Project A" />
-					<button id="create-project" class="primary-button">Add project</button>
+			<div class="sidebar-threads-header">
+				<span>Threads</span>
+				<div class="threads-actions">
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path><line x1="12" y1="11" x2="12" y2="17"></line><line x1="9" y1="14" x2="15" y2="14"></line></svg>
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon></svg>
 				</div>
-			</section>
+			</div>
 
-			<section class="panel project-tree">
+			<div class="project-tree">
 				<ul id="project-tree" class="tree-root"></ul>
-			</section>
+			</div>
 
-			<section class="panel">
-				<div class="panel-content form-grid">
-					<h2 class="section-heading">Add terminal</h2>
-					<p class="empty-note">Select a project node first, then create terminals beneath it.</p>
-					<label class="form-label" for="terminal-name">Terminal name</label>
-					<input id="terminal-name" type="text" placeholder="API shell" />
-					<label class="form-label" for="terminal-cwd">Working directory</label>
-					<input id="terminal-cwd" type="text" />
-					<label class="form-label" for="terminal-shell">Shell (optional)</label>
-					<input id="terminal-shell" type="text" />
-					<button id="create-terminal" class="secondary-button">Add terminal</button>
-				</div>
-			</section>
+			<div class="sidebar-bottom">
+				<button class="nav-item">
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.8 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 z"></path></svg>
+					<span>Settings</span>
+				</button>
+				<button class="upgrade-btn">Upgrade</button>
+			</div>
+
+			<div style="display:none;">
+				<input id="project-name" />
+				<button id="create-project"></button>
+				<input id="terminal-name" />
+				<input id="terminal-cwd" />
+				<input id="terminal-shell" />
+				<button id="create-terminal"></button>
+			</div>
 		</aside>
 
 		<main class="workspace">
@@ -410,14 +420,14 @@ function renderTree(): void {
 										<button
 											class="tree-terminal-button ${selection?.kind === "terminal" && selection.id === terminal.id ? "active" : ""}"
 											data-terminal-id="${terminal.id}">
-											<span class="tree-terminal-copy">
-												<span>${escapeHtml(terminal.name)}</span>
-												<span class="tree-terminal-detail">${escapeHtml(terminal.activity.summary)}</span>
-											</span>
-											<span class="tree-terminal-badges">
-												<span class="activity-chip compact ${terminal.activity.phase}">${formatActivityPhase(terminal.activity.phase)}</span>
-												<span class="status-pill ${terminal.status}">${formatStatus(terminal.status)}</span>
-											</span>
+											<div class="thread-info">
+												<span class="thread-title">${escapeHtml(terminal.name)}</span>
+												<div class="thread-stats">
+													<span class="stat-add">+47</span>
+													<span class="stat-remove">-83</span>
+												</div>
+											</div>
+											<div class="thread-time">3h</div>
 										</button>
 									</li>
 								`,
@@ -429,8 +439,8 @@ function renderTree(): void {
 					<button
 						class="tree-project-button ${selection?.kind === "project" && selection.id === project.id ? "active" : ""}"
 						data-project-id="${project.id}">
+						<svg class="folder-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
 						<span>${escapeHtml(project.name)}</span>
-						<span class="status-pill">${terminals.length}</span>
 					</button>
 					<ul class="tree-children">${terminalsMarkup}</ul>
 				</li>
