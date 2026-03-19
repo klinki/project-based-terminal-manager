@@ -48,3 +48,9 @@ Thumbs.db
 # Project Window Manager specific
 *.log
 .env*
+
+# TerminalWindowManager.ElectroBun generated content
+src/TerminalWindowManager.ElectroBun/node_modules/
+src/TerminalWindowManager.ElectroBun/dist/
+src/TerminalWindowManager.ElectroBun/build/
+src/TerminalWindowManager.ElectroBun/artifacts/
