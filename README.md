@@ -5,7 +5,7 @@ This repository currently contains two code paths:
 - `TerminalWindowManager.*`: the active implementation.
 - `ProjectWindowManager.*`: legacy projects that are not part of the supported build flow.
 
-Use the root `build.ps1` script for repeatable builds of the active projects. Do not rely on `ProjectWindowManager.slnx` if you want to avoid the legacy projects.
+Use the root `build.ps1` script for repeatable builds of the active projects. The active solution file is `TerminalWindowManager.slnx`.
 
 ## Active Projects
 
