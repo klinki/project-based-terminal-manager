@@ -1,0 +1,51 @@
+src/TerminalWindowManager.ElectroBun/src/mainview/style.css
+  8ea448679dbe0d5f 79,88,92-93
+src/TerminalWindowManager.ElectroBun/src/mainview/main.ts
+  8ea448679dbe0d5f 95-114,116,118,120,122-134,423-430,442
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.15",
+  "base_commit_sha": "f1a4f8fa0e86c325fdc69a5cc519020f2c42c937",
+  "prompts": {
+    "53ef9574fd930856": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d065a-2125-74f0-89ae-65e12d2bbc9f",
+        "model": "gpt-5.4"
+      },
+      "human_author": "David Klingenberg <dklingenberg@gmail.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 0,
+      "overriden_lines": 0
+    },
+    "8ea448679dbe0d5f": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_2f8d099a0ffe57RtzMhKUVB1ac",
+        "model": "unknown"
+      },
+      "human_author": "David Klingenberg <dklingenberg@gmail.com>",
+      "messages": [],
+      "total_additions": 1210,
+      "total_deletions": 1200,
+      "accepted_lines": 625,
+      "overriden_lines": 0
+    },
+    "a1c518970a804281": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d065b-6960-7b40-b3ac-cad85d307e94",
+        "model": "unknown"
+      },
+      "human_author": "David Klingenberg <dklingenberg@gmail.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 5,
+      "overriden_lines": 0
+    }
+  }
+}
