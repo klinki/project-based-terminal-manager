@@ -57,6 +57,18 @@ const rpc = BrowserView.defineRPC<TerminalManagerRpc>({
 				return snapshotState();
 			},
 
+			renameProject: ({ projectId, name }) => {
+				const project = findProject(projectId);
+				const trimmedName = name.trim();
+				if (!trimmedName) {
+					throw new Error("Project name cannot be empty.");
+				}
+
+				project.name = trimmedName;
+				persistState();
+				return snapshotState();
+			},
+
 			createTerminal: ({ projectId, name, cwd, shell }) => {
 				const project = findProject(projectId);
 				const trimmedName = name.trim();

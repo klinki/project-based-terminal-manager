@@ -68,6 +68,10 @@ export type TerminalManagerRpc = {
 		requests: {
 			getInitialState: { params: {}; response: AppState };
 			createProject: { params: { name: string }; response: AppState };
+			renameProject: {
+				params: { projectId: string; name: string };
+				response: AppState;
+			};
 			createTerminal: {
 				params: {
 					projectId: string;

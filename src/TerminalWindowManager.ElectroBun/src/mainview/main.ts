@@ -19,6 +19,7 @@ const rpc = Electroview.defineRPC<TerminalManagerRpc>({
 			stateChanged: (nextState) => {
 				state = nextState;
 				reconcileSelection();
+				reconcileProjectEditing();
 				renderTree();
 				renderInspector();
 				renderStatusBoard();
@@ -76,6 +77,10 @@ let state: AppState = {
 let selection: Selection = null;
 let statusMessage = "Booting Terminal Window Manager ElectroBun proof of concept...";
 let layoutSyncScheduled = false;
+let editingProjectId: string | null = null;
+let editingProjectDraft = "";
+let shouldFocusProjectEditor = false;
+const collapsedProjectIds = new Set<string>();
 
 const terminalViews = new Map<string, TerminalView>();
 const utf8Decoder = new TextDecoder();
@@ -92,27 +97,37 @@ function getRendererRpc() {
 app.innerHTML = `
 	<div class="app-shell">
 		<aside class="sidebar">
-			<div class="sidebar-nav">
-				<button class="nav-item">
-					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
-					<span>New thread</span>
-				</button>
-				<button class="nav-item">
-					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
-					<span>Automations</span>
-				</button>
-				<button class="nav-item">
-					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
-					<span>Skills</span>
-				</button>
+			<div class="sidebar-top">
+				<div class="sidebar-brand">
+					<div class="sidebar-brand-mark">TW</div>
+					<div>
+						<div class="sidebar-brand-title">Terminal Window Manager</div>
+						<div class="sidebar-brand-subtitle">Projects and live consoles</div>
+					</div>
+				</div>
+
+				<div class="sidebar-nav">
+					<button id="new-console-button" class="nav-item nav-item-primary">
+						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<path d="M4 17 10 11 4 5"></path>
+							<path d="M12 19h8"></path>
+						</svg>
+						<span>New console</span>
+					</button>
+					<button id="new-project-button" class="nav-item">
+						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+							<path d="M12 11v6"></path>
+							<path d="M9 14h6"></path>
+						</svg>
+						<span>New project</span>
+					</button>
+				</div>
 			</div>
 
-			<div class="sidebar-threads-header">
-				<span>Threads</span>
-				<div class="threads-actions">
-					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path><line x1="12" y1="11" x2="12" y2="17"></line><line x1="9" y1="14" x2="15" y2="14"></line></svg>
-					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon></svg>
-				</div>
+			<div class="sidebar-section-header">
+				<span>Projects</span>
+				<span id="project-count" class="sidebar-section-count">0</span>
 			</div>
 
 			<div class="project-tree">
@@ -120,20 +135,13 @@ app.innerHTML = `
 			</div>
 
 			<div class="sidebar-bottom">
-				<button class="nav-item">
-					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.8 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 z"></path></svg>
+				<button class="nav-item nav-item-footer" type="button">
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+						<circle cx="12" cy="12" r="3"></circle>
+						<path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+					</svg>
 					<span>Settings</span>
 				</button>
-				<button class="upgrade-btn">Upgrade</button>
-			</div>
-
-			<div style="display:none;">
-				<input id="project-name" />
-				<button id="create-project"></button>
-				<input id="terminal-name" />
-				<input id="terminal-cwd" />
-				<input id="terminal-shell" />
-				<button id="create-terminal"></button>
 			</div>
 		</aside>
 
@@ -141,11 +149,11 @@ app.innerHTML = `
 			<section class="panel">
 				<div class="panel-content info-card">
 					<div>
-						<h1 id="selection-title" class="heading">Select a terminal</h1>
+						<h1 id="selection-title" class="heading">Select a console</h1>
 						<p id="selection-subtitle" class="subheading">Sessions stay alive once started so you can switch back and forth quickly.</p>
 					</div>
 					<div class="toolbar">
-						<button id="restart-terminal" class="secondary-button" disabled>Restart selected terminal</button>
+						<button id="restart-terminal" class="secondary-button" disabled>Restart selected console</button>
 					</div>
 					<dl id="selection-metadata" class="metadata-grid"></dl>
 				</div>
@@ -155,8 +163,8 @@ app.innerHTML = `
 				<div class="status-board-main">
 					<div id="activity-indicator" class="activity-indicator idle" aria-hidden="true"></div>
 					<div class="status-copy">
-						<h2 id="activity-title" class="status-heading">Terminal telemetry inactive</h2>
-						<p id="activity-detail" class="status-detail">Select a terminal to inspect live session status.</p>
+						<h2 id="activity-title" class="status-heading">Console telemetry inactive</h2>
+						<p id="activity-detail" class="status-detail">Select a console to inspect live session status.</p>
 					</div>
 					<div class="status-meta">
 						<span id="activity-chip" class="activity-chip idle">Idle</span>
@@ -170,7 +178,7 @@ app.innerHTML = `
 
 			<section id="terminal-stage" class="terminal-stage">
 				<div id="terminal-empty" class="terminal-stage-empty">
-					Choose a terminal on the left to start a live ConPTY-backed session.
+					Choose a console on the left to start a live ConPTY-backed session.
 				</div>
 				<div id="terminal-stack" class="terminal-stack"></div>
 			</section>
@@ -179,13 +187,11 @@ app.innerHTML = `
 `;
 
 const projectTreeElement = queryHtmlElement<HTMLUListElement>("project-tree");
-const projectNameInput = queryHtmlElement<HTMLInputElement>("project-name");
-const terminalNameInput = queryHtmlElement<HTMLInputElement>("terminal-name");
-const terminalCwdInput = queryHtmlElement<HTMLInputElement>("terminal-cwd");
-const terminalShellInput = queryHtmlElement<HTMLInputElement>("terminal-shell");
-const createProjectButton = queryHtmlElement<HTMLButtonElement>("create-project");
-const createTerminalButton =
-	queryHtmlElement<HTMLButtonElement>("create-terminal");
+const projectCount = queryHtmlElement<HTMLElement>("project-count");
+const newProjectButton =
+	queryHtmlElement<HTMLButtonElement>("new-project-button");
+const newConsoleButton =
+	queryHtmlElement<HTMLButtonElement>("new-console-button");
 const selectionTitle = queryHtmlElement<HTMLHeadingElement>("selection-title");
 const selectionSubtitle =
 	queryHtmlElement<HTMLParagraphElement>("selection-subtitle");
@@ -208,66 +214,30 @@ const terminalStageResizeObserver = new ResizeObserver(() => {
 });
 terminalStageResizeObserver.observe(terminalStage);
 
-createProjectButton.addEventListener("click", async () => {
-	const name = projectNameInput.value.trim();
-	if (!name) {
-		setStatus("Enter a project name first.");
-		return;
-	}
-
-	state = await getRendererRpc().proxy.request.createProject({ name });
-	projectNameInput.value = "";
-	selection = {
-		kind: "project",
-		id: state.projects[state.projects.length - 1]!.id,
-	};
-	renderTree();
-	renderInspector();
-	renderStatusBoard();
-	setStatus(`Created project '${name}'.`);
+newProjectButton.addEventListener("click", () => {
+	void createProjectAndBeginRename();
 });
 
-createTerminalButton.addEventListener("click", async () => {
-	const selectedProject = getSelectedProject();
-	if (!selectedProject) {
-		setStatus("Select a project node before creating a terminal.");
-		return;
-	}
-
-	const name = terminalNameInput.value.trim();
-	const cwd = terminalCwdInput.value.trim();
-	const shell = terminalShellInput.value.trim();
-	if (!name || !cwd) {
-		setStatus("Terminal name and working directory are required.");
-		return;
-	}
-
-	state = await getRendererRpc().proxy.request.createTerminal({
-		projectId: selectedProject.id,
-		name,
-		cwd,
-		shell,
-	});
-
-	const createdTerminal = [...state.terminals]
-		.filter((terminal) => terminal.projectId === selectedProject.id)
-		.sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt))
-		.at(-1);
-
-	if (createdTerminal) {
-		selection = { kind: "terminal", id: createdTerminal.id };
-	}
-
-	terminalNameInput.value = "";
-	terminalShellInput.value = state.defaults.defaultShell;
-	renderTree();
-	renderInspector();
-	renderStatusBoard();
-	setStatus(`Added terminal '${name}' under '${selectedProject.name}'.`);
+newConsoleButton.addEventListener("click", () => {
+	void createConsoleFromSelection();
 });
 
 projectTreeElement.addEventListener("click", (event) => {
 	const target = event.target as HTMLElement;
+
+	const projectToggleButton = target.closest<HTMLElement>("[data-project-toggle-id]");
+	if (projectToggleButton) {
+		toggleProjectCollapsed(projectToggleButton.dataset.projectToggleId!);
+		return;
+	}
+
+	const projectConsoleButton =
+		target.closest<HTMLButtonElement>("[data-project-new-console-id]");
+	if (projectConsoleButton) {
+		void createConsoleFromProject(projectConsoleButton.dataset.projectNewConsoleId!);
+		return;
+	}
+
 	const terminalButton = target.closest<HTMLButtonElement>("[data-terminal-id]");
 	if (terminalButton) {
 		void selectTerminal(terminalButton.dataset.terminalId!);
@@ -281,6 +251,69 @@ projectTreeElement.addEventListener("click", (event) => {
 		renderInspector();
 		renderStatusBoard();
 	}
+});
+
+projectTreeElement.addEventListener("dblclick", (event) => {
+	const target = event.target as HTMLElement;
+	const projectButton = target.closest<HTMLButtonElement>("[data-project-id]");
+	if (!projectButton) {
+		return;
+	}
+
+	const project = findProject(projectButton.dataset.projectId!);
+	if (!project) {
+		return;
+	}
+
+	startEditingProject(project.id, project.name);
+});
+
+projectTreeElement.addEventListener("submit", (event) => {
+	const target = event.target as HTMLElement;
+	const form = target.closest<HTMLFormElement>("[data-project-edit-form]");
+	if (!form) {
+		return;
+	}
+
+	event.preventDefault();
+	void commitProjectRename(form.dataset.projectEditForm!);
+});
+
+projectTreeElement.addEventListener("input", (event) => {
+	const target = event.target as HTMLInputElement;
+	if (!target.matches("[data-project-edit-input]")) {
+		return;
+	}
+
+	editingProjectDraft = target.value;
+});
+
+projectTreeElement.addEventListener("keydown", (event) => {
+	const target = event.target as HTMLElement;
+	if (!target.matches("[data-project-edit-input]")) {
+		return;
+	}
+
+	if (event.key === "Escape") {
+		event.preventDefault();
+		cancelProjectRename();
+	}
+});
+
+projectTreeElement.addEventListener("focusout", (event) => {
+	const target = event.target as HTMLElement;
+	if (!target.matches("[data-project-edit-input]")) {
+		return;
+	}
+
+	const projectId = (target as HTMLInputElement).dataset.projectEditInput!;
+	const nextTarget = event.relatedTarget as Node | null;
+	const form = target.closest<HTMLFormElement>("[data-project-edit-form]");
+	if (form && nextTarget && form.contains(nextTarget)) {
+		return;
+	}
+
+	void commitProjectRename(projectId);
 });
 
 restartTerminalButton.addEventListener("click", async () => {
@@ -304,25 +337,7 @@ restartTerminalButton.addEventListener("click", async () => {
 });
 
 window.addEventListener("resize", () => {
-	const selectedTerminal = getSelectedTerminal();
-	if (!selectedTerminal) {
-		return;
-	}
-
-	queueMicrotask(() => {
-		const terminalView = ensureTerminalView(selectedTerminal.id);
-		terminalView.fitAddon.fit();
-		if (
-			selectedTerminal.status === "running" ||
-			selectedTerminal.status === "starting"
-		) {
-			void getRendererRpc().proxy.request.resizeTerminal({
-				terminalId: selectedTerminal.id,
-				cols: terminalView.terminal.cols,
-				rows: terminalView.terminal.rows,
-			});
-		}
-	});
+	scheduleSelectedTerminalLayoutSync();
 });
 
 bootstrap().catch((error: unknown) => {
@@ -333,14 +348,12 @@ bootstrap().catch((error: unknown) => {
 
 async function bootstrap(): Promise<void> {
 	state = await getRendererRpc().proxy.request.getInitialState({});
-	terminalCwdInput.value = state.defaults.defaultCwd;
-	terminalShellInput.value = state.defaults.defaultShell;
 	reconcileSelection();
 	renderTree();
 	renderInspector();
 	renderStatusBoard();
 	setStatus(
-		"Create projects, add terminals, and click a terminal to start a live ConPTY-backed session.",
+		"Create a project, open a console, and click a console to start a live ConPTY-backed session.",
 	);
 }
 
@@ -367,11 +380,154 @@ function reconcileSelection(): void {
 	}
 
 	if (state.projects.length > 0) {
-		selection = { kind: "project", id: state.projects[0]!.id };
+		selection = { kind: "project", id: sortProjects(state.projects)[0]!.id };
 		return;
 	}
 
 	selection = null;
+}
+
+function reconcileProjectEditing(): void {
+	if (!editingProjectId) {
+		return;
+	}
+
+	if (findProject(editingProjectId)) {
+		return;
+	}
+
+	editingProjectId = null;
+	editingProjectDraft = "";
+	shouldFocusProjectEditor = false;
+}
+
+function toggleProjectCollapsed(projectId: string): void {
+	if (collapsedProjectIds.has(projectId)) {
+		collapsedProjectIds.delete(projectId);
+	} else {
+		collapsedProjectIds.add(projectId);
+	}
+
+	renderTree();
+}
+
+async function createProjectAndBeginRename(): Promise<void> {
+	const placeholderName = getNextProjectPlaceholderName();
+	state = await getRendererRpc().proxy.request.createProject({
+		name: placeholderName,
+	});
+
+	const project = findProjectByNameAndCreatedAt(placeholderName);
+	if (!project) {
+		throw new Error("The newly created project could not be resolved.");
+	}
+
+	selection = { kind: "project", id: project.id };
+	startEditingProject(project.id, project.name);
+	setStatus(`Created '${project.name}'. Type a project name and press Enter to confirm.`);
+}
+
+function startEditingProject(projectId: string, currentName: string): void {
+	selection = { kind: "project", id: projectId };
+	editingProjectId = projectId;
+	editingProjectDraft = currentName;
+	shouldFocusProjectEditor = true;
+	renderTree();
+	renderInspector();
+	renderStatusBoard();
+}
+
+function cancelProjectRename(): void {
+	const project = editingProjectId ? findProject(editingProjectId) : undefined;
+	editingProjectId = null;
+	editingProjectDraft = "";
+	shouldFocusProjectEditor = false;
+	renderTree();
+	if (project) {
+		setStatus(`Kept project name '${project.name}'.`);
+	}
+}
+
+async function commitProjectRename(projectId: string): Promise<void> {
+	if (editingProjectId !== projectId) {
+		return;
+	}
+
+	const project = findProject(projectId);
+	if (!project) {
+		cancelProjectRename();
+		return;
+	}
+
+	const finalName = editingProjectDraft.trim() || project.name;
+	editingProjectId = null;
+	editingProjectDraft = "";
+	shouldFocusProjectEditor = false;
+
+	if (finalName !== project.name) {
+		state = await getRendererRpc().proxy.request.renameProject({
+			projectId,
+			name: finalName,
+		});
+	}
+
+	renderTree();
+	renderInspector();
+	renderStatusBoard();
+	setStatus(`Project renamed to '${finalName}'.`);
+}
+
+async function createConsoleFromSelection(): Promise<void> {
+	const project = await ensureProjectForConsole();
+	await createConsoleFromProject(project.id);
+}
+
+async function ensureProjectForConsole(): Promise<ProjectRecord> {
+	const selectedProject = getSelectedProject();
+	if (selectedProject) {
+		return selectedProject;
+	}
+
+	const firstProject = sortProjects(state.projects)[0];
+	if (firstProject) {
+		return firstProject;
+	}
+
+	const placeholderName = getNextProjectPlaceholderName();
+	state = await getRendererRpc().proxy.request.createProject({
+		name: placeholderName,
+	});
+	const project = findProjectByNameAndCreatedAt(placeholderName);
+	if (!project) {
+		throw new Error("The auto-created project could not be resolved.");
+	}
+
+	selection = { kind: "project", id: project.id };
+	setStatus(`Created '${project.name}' to host the new console.`);
+	return project;
+}
+
+async function createConsoleFromProject(projectId: string): Promise<void> {
+	const project = findProject(projectId);
+	if (!project) {
+		return;
+	}
+
+	const name = getNextConsolePlaceholderName(project.id);
+	state = await getRendererRpc().proxy.request.createTerminal({
+		projectId: project.id,
+		name,
+		cwd: state.defaults.defaultCwd,
+		shell: state.defaults.defaultShell,
+	});
+
+	const terminal = findNewestTerminalForProject(project.id);
+	if (!terminal) {
+		throw new Error("The newly created console could not be resolved.");
+	}
+
+	await selectTerminal(terminal.id);
+	setStatus(`Started '${terminal.name}' in '${project.name}'.`);
 }
 
 async function selectTerminal(terminalId: string): Promise<void> {
@@ -398,36 +554,90 @@ async function selectTerminal(terminalId: string): Promise<void> {
 }
 
 function renderTree(): void {
+	projectCount.textContent = String(state.projects.length);
+
 	if (state.projects.length === 0) {
-		projectTreeElement.innerHTML =
-			`<li class="empty-note">No projects yet. Create one to begin.</li>`;
+		projectTreeElement.innerHTML = `
+			<li class="empty-state">
+				<div class="empty-state-title">No projects yet</div>
+				<div class="empty-state-copy">Create a project to start organizing consoles.</div>
+			</li>
+		`;
 		return;
 	}
 
-	projectTreeElement.innerHTML = state.projects
+	projectTreeElement.innerHTML = sortProjects(state.projects)
 		.map((project) => {
-			const terminals = state.terminals.filter(
-				(terminal) => terminal.projectId === project.id,
+			const terminals = sortTerminals(
+				state.terminals.filter((terminal) => terminal.projectId === project.id),
 			);
+			const isProjectSelected =
+				selection?.kind === "project" && selection.id === project.id;
+			const isEditing = editingProjectId === project.id;
+			const isCollapsed = collapsedProjectIds.has(project.id);
+
+			const projectLabel = isEditing
+				? `
+					<div class="tree-project-shell selected">
+						<button
+							type="button"
+							class="tree-project-toggle ${isCollapsed ? "collapsed" : ""}"
+							data-project-toggle-id="${project.id}"
+							aria-label="${isCollapsed ? "Expand" : "Collapse"} ${escapeHtmlAttribute(project.name)}">
+							${chevronIconMarkup()}
+						</button>
+						${folderIconMarkup()}
+						<form class="tree-project-form" data-project-edit-form="${project.id}">
+							<input
+								class="tree-project-input"
+								data-project-edit-input="${project.id}"
+								type="text"
+								value="${escapeHtmlAttribute(editingProjectDraft)}"
+								aria-label="Project name" />
+						</form>
+						<span class="tree-project-count">${terminals.length}</span>
+					</div>
+				`
+				: `
+					<button
+						type="button"
+						class="tree-project-button ${isProjectSelected ? "active" : ""}"
+						data-project-id="${project.id}">
+						<span
+							class="tree-project-toggle ${isCollapsed ? "collapsed" : ""}"
+							data-project-toggle-id="${project.id}"
+							role="button"
+							tabindex="-1"
+							aria-label="${isCollapsed ? "Expand" : "Collapse"} ${escapeHtmlAttribute(project.name)}">
+							${chevronIconMarkup()}
+						</span>
+						${folderIconMarkup()}
+						<span class="tree-project-copy">
+							<span class="tree-project-title">${escapeHtml(project.name)}</span>
+							<span class="tree-project-detail">${formatConsoleCount(terminals.length)}</span>
+						</span>
+					</button>
+				`;
 
 			const terminalsMarkup =
 				terminals.length === 0
-					? `<li class="empty-note">No terminals yet.</li>`
+					? `<li class="tree-empty">No consoles</li>`
 					: terminals
 							.map(
 								(terminal) => `
 									<li>
 										<button
+											type="button"
 											class="tree-terminal-button ${selection?.kind === "terminal" && selection.id === terminal.id ? "active" : ""}"
 											data-terminal-id="${terminal.id}">
-											<div class="thread-info">
-												<span class="thread-title">${escapeHtml(terminal.name)}</span>
-												<div class="thread-stats">
-													<span class="stat-add">+47</span>
-													<span class="stat-remove">-83</span>
-												</div>
+											<div class="tree-terminal-copy">
+												<span class="tree-terminal-title">${escapeHtml(terminal.name)}</span>
+												<span class="tree-terminal-detail">${escapeHtml(terminal.activity.summary)}</span>
 											</div>
-											<div class="thread-time">3h</div>
+											<div class="tree-terminal-meta">
+												<span class="activity-chip compact ${terminal.activity.phase}">${formatActivityPhase(terminal.activity.phase)}</span>
+												<span class="tree-terminal-time">${formatRelativeTime(getTerminalRecency(terminal))}</span>
+											</div>
 										</button>
 									</li>
 								`,
@@ -436,17 +646,27 @@ function renderTree(): void {
 
 			return `
 				<li class="tree-node">
-					<button
-						class="tree-project-button ${selection?.kind === "project" && selection.id === project.id ? "active" : ""}"
-						data-project-id="${project.id}">
-						<svg class="folder-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
-						<span>${escapeHtml(project.name)}</span>
-					</button>
-					<ul class="tree-children">${terminalsMarkup}</ul>
+					<div class="tree-project-row">
+						${projectLabel}
+						<button
+							type="button"
+							class="tree-project-action"
+							data-project-new-console-id="${project.id}"
+							title="New console in ${escapeHtmlAttribute(project.name)}"
+							aria-label="New console in ${escapeHtmlAttribute(project.name)}">
+							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								<path d="M12 5v14"></path>
+								<path d="M5 12h14"></path>
+							</svg>
+						</button>
+					</div>
+					<ul class="tree-children ${isCollapsed ? "collapsed" : ""}">${terminalsMarkup}</ul>
 				</li>
 			`;
 		})
 		.join("");
+
+	focusProjectEditorIfNeeded();
 }
 
 function renderInspector(): void {
@@ -474,34 +694,35 @@ function renderInspector(): void {
 		terminalEmpty.style.display = terminalViews.has(selectedTerminal.id)
 			? "none"
 			: "flex";
+		scheduleSelectedTerminalLayoutSync();
 		return;
 	}
 
 	if (selectedProject) {
 		selectionTitle.textContent = selectedProject.name;
 		selectionSubtitle.textContent =
-			"Select one of this project's terminals to start or return to a live pseudoterminal session.";
+			"Select one of this project's consoles to start or return to a live pseudoterminal session.";
 		selectionMetadata.innerHTML = `
 			<dt>Created</dt>
 			<dd>${new Date(selectedProject.createdAt).toLocaleString()}</dd>
-			<dt>Terminals</dt>
+			<dt>Consoles</dt>
 			<dd>${state.terminals.filter((terminal) => terminal.projectId === selectedProject.id).length}</dd>
-			<dt>Metadata persistence</dt>
-			<dd>Projects and terminal definitions are stored. Live processes are not restored on relaunch.</dd>
+			<dt>Rename</dt>
+			<dd>Double-click the project in the sidebar to rename it.</dd>
+			<dt>Persistence</dt>
+			<dd>Projects and console definitions are stored. Live processes are not restored on relaunch.</dd>
 		`;
 		restartTerminalButton.disabled = true;
 		terminalEmpty.style.display = state.activeTerminalId ? "none" : "flex";
 		return;
 	}
 
-	selectionTitle.textContent = "Select a terminal";
+	selectionTitle.textContent = "Select a console";
 	selectionSubtitle.textContent =
-		"Each terminal leaf becomes a live ConPTY session once activated.";
+		"Each console leaf becomes a live ConPTY session once activated.";
 	selectionMetadata.innerHTML = "";
 	restartTerminalButton.disabled = true;
 	terminalEmpty.style.display = "flex";
-
-	scheduleSelectedTerminalLayoutSync();
 }
 
 function renderStatusBoard(): void {
@@ -514,13 +735,14 @@ function renderStatusBoard(): void {
 		: activity.summary;
 	activityDetail.textContent = selectedTerminal
 		? activity.detail
-		: "Select a terminal to see live status and recent activity.";
+		: "Select a console to see live status and recent activity.";
 	activityChip.className = `activity-chip ${activity.phase}`;
 	activityChip.textContent = formatActivityPhase(activity.phase);
 	activityUpdated.textContent = selectedTerminal
 		? `Updated ${formatRelativeTime(activity.updatedAt)}`
-		: "No terminal selected";
+		: "No console selected";
 	statusBanner.textContent = statusMessage;
+	scheduleSelectedTerminalLayoutSync();
 }
 
 function ensureTerminalView(terminalId: string): TerminalView {
@@ -599,6 +821,25 @@ function showTerminalView(terminalId: string, notifyBackend = true): void {
 	});
 }
 
+function focusProjectEditorIfNeeded(): void {
+	if (!shouldFocusProjectEditor || !editingProjectId) {
+		return;
+	}
+
+	shouldFocusProjectEditor = false;
+	requestAnimationFrame(() => {
+		const input = projectTreeElement.querySelector<HTMLInputElement>(
+			`[data-project-edit-input="${editingProjectId}"]`,
+		);
+		if (!input) {
+			return;
+		}
+
+		input.focus();
+		input.select();
+	});
+}
+
 function getSelectedProject(): ProjectRecord | undefined {
 	if (selection?.kind === "project") {
 		const projectId = selection.id;
@@ -607,10 +848,10 @@ function getSelectedProject(): ProjectRecord | undefined {
 
 	if (selection?.kind === "terminal") {
 		const terminalId = selection.id;
-		const terminal = state.terminals.find((candidate) => candidate.id === terminalId);
-		return terminal
-			? state.projects.find((project) => project.id === terminal.projectId)
-			: undefined;
+		const terminal = state.terminals.find(
+			(candidate) => candidate.id === terminalId,
+		);
+		return terminal ? findProject(terminal.projectId) : undefined;
 	}
 
 	return undefined;
@@ -627,6 +868,36 @@ function getSelectedTerminal(): TerminalRecord | undefined {
 
 function findProject(projectId: string): ProjectRecord | undefined {
 	return state.projects.find((project) => project.id === projectId);
+}
+
+function findNewestTerminalForProject(projectId: string): TerminalRecord | undefined {
+	return [...state.terminals]
+		.filter((terminal) => terminal.projectId === projectId)
+		.sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))
+		[0];
+}
+
+function findProjectByNameAndCreatedAt(name: string): ProjectRecord | undefined {
+	return [...state.projects]
+		.filter((project) => project.name === name)
+		.sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))
+		[0];
+}
+
+function sortProjects(projects: ProjectRecord[]): ProjectRecord[] {
+	return [...projects];
+}
+
+function sortTerminals(terminals: TerminalRecord[]): TerminalRecord[] {
+	return [...terminals];
+}
+
+function getTerminalRecency(terminal: TerminalRecord): number {
+	return Math.max(
+		Date.parse(terminal.lastStartedAt ?? terminal.createdAt),
+		Date.parse(terminal.activity.updatedAt),
+		0,
+	);
 }
 
 function setStatus(message: string): void {
@@ -672,6 +943,44 @@ function scheduleSelectedTerminalLayoutSync(): void {
 	});
 }
 
+function getNextProjectPlaceholderName(): string {
+	return getNextPlaceholderName(
+		state.projects.map((project) => project.name),
+		"Project",
+	);
+}
+
+function getNextConsolePlaceholderName(projectId: string): string {
+	return getNextPlaceholderName(
+		state.terminals
+			.filter((terminal) => terminal.projectId === projectId)
+			.map((terminal) => terminal.name),
+		"Console",
+	);
+}
+
+function getNextPlaceholderName(existingNames: string[], prefix: string): string {
+	const usedNumbers = new Set<number>();
+	const matcher = new RegExp(`^${prefix} (\\d+)$`);
+	for (const existingName of existingNames) {
+		const match = matcher.exec(existingName);
+		if (match) {
+			usedNumbers.add(Number(match[1]));
+		}
+	}
+
+	let index = 1;
+	while (usedNumbers.has(index)) {
+		index += 1;
+	}
+
+	return `${prefix} ${index}`;
+}
+
+function formatConsoleCount(count: number): string {
+	return count === 1 ? "1 console" : `${count} consoles`;
+}
+
 function formatStatus(status: TerminalStatus): string {
 	return status[0]!.toUpperCase() + status.slice(1);
 }
@@ -694,27 +1003,54 @@ function formatActivityPhase(phase: TerminalActivityPhase): string {
 function createFallbackActivity(): TerminalActivity {
 	return {
 		phase: "idle",
-		summary: "Terminal telemetry inactive",
-		detail: "Select a terminal to inspect live session status.",
-		progress: 4,
+		summary: "Console telemetry inactive",
+		detail: "Select a console to inspect live session status.",
+		progress: 0,
 		isIndeterminate: false,
 		updatedAt: new Date().toISOString(),
 	};
 }
 
-function formatRelativeTime(updatedAt: string): string {
-	const elapsedMs = Date.now() - Date.parse(updatedAt);
+function formatRelativeTime(timestamp: number | string): string {
+	const value = typeof timestamp === "string" ? Date.parse(timestamp) : timestamp;
+	const elapsedMs = Date.now() - value;
 	if (elapsedMs < 5_000) {
 		return "just now";
 	}
 
-	const elapsedSeconds = Math.round(elapsedMs / 1_000);
-	if (elapsedSeconds < 60) {
-		return `${elapsedSeconds}s ago`;
+	const elapsedMinutes = Math.round(elapsedMs / 60_000);
+	if (elapsedMinutes < 60) {
+		return `${elapsedMinutes}m`;
 	}
 
-	const elapsedMinutes = Math.round(elapsedSeconds / 60);
-	return `${elapsedMinutes}m ago`;
+	const elapsedHours = Math.round(elapsedMinutes / 60);
+	if (elapsedHours < 24) {
+		return `${elapsedHours}h`;
+	}
+
+	const elapsedDays = Math.round(elapsedHours / 24);
+	if (elapsedDays < 7) {
+		return `${elapsedDays}d`;
+	}
+
+	const elapsedWeeks = Math.round(elapsedDays / 7);
+	return `${elapsedWeeks}w`;
+}
+
+function folderIconMarkup(): string {
+	return `
+		<svg class="folder-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+			<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+		</svg>
+	`;
+}
+
+function chevronIconMarkup(): string {
+	return `
+		<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+			<path d="m9 18 6-6-6-6"></path>
+		</svg>
+	`;
 }
 
 function escapeHtml(value: string): string {
@@ -724,6 +1060,10 @@ function escapeHtml(value: string): string {
 		.replaceAll(">", "&gt;")
 		.replaceAll('"', "&quot;")
 		.replaceAll("'", "&#39;");
+}
+
+function escapeHtmlAttribute(value: string): string {
+	return escapeHtml(value);
 }
 
 function decodeBase64(base64: string): string {
