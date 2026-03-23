@@ -3,7 +3,7 @@
 ## Development Prerequisites
 
 - **IDE**: Visual Studio 2022 (with ".NET desktop development" workload)
-- **Runtime**: .NET 8 SDK
+- **Runtime**: .NET 10 SDK
 - **Platform**: Windows 10/11
 
 ## Setup Instructions

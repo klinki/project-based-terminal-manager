@@ -20,7 +20,7 @@
 **Purpose**: Project initialization and basic structure
 
 - [x] T001 Create project solution and directory structure per implementation plan
-- [x] T002 Initialize WPF App, Core Library, and Win32 Library projects (.NET 8)
+- [x] T002 Initialize WPF App, Core Library, and Win32 Library projects (.NET 10)
 - [x] T003 Configure PInvoke.User32 and other Win32 dependencies in `src/ProjectWindowManager.Win32/`
 
 ---

@@ -24,5 +24,5 @@
 ## Persistence and Inactive States
 
 - **Decision**: Use `System.Text.Json` to save project definitions (paths, names, history).
-- **Rationale**: Lightweight, human-readable, and standard for .NET 8 applications.
+- **Rationale**: Lightweight, human-readable, and standard for .NET 10 applications.
 - **Inactive State**: When an application is closed, we preserve its metadata in the JSON file. Upon relaunching, we create a new process and re-apply the hosting logic.

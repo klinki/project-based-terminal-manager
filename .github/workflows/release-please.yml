@@ -1,0 +1,70 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  release_please:
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create or update release PR
+        id: release
+        uses: googleapis/release-please-action@v4
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  windows_release:
+    name: Build and upload Windows release
+    needs: release_please
+    if: ${{ needs.release_please.outputs.release_created == 'true' }}
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Build the Windows release package
+        shell: pwsh
+        run: .\build.ps1 -Target Desktop -ForceFrontendInstall
+
+      - name: Upload release artifacts
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $artifactDir = "src\TerminalWindowManager.ElectroBun\artifacts"
+          $artifacts = Get-ChildItem -Path $artifactDir -Filter "stable-win-x64-*" | Sort-Object Name | Select-Object -ExpandProperty FullName
+
+          if (-not $artifacts) {
+            throw "No stable Windows release artifacts were produced in '$artifactDir'."
+          }
+
+          gh release upload "${{ needs.release_please.outputs.tag_name }}" $artifacts --clobber

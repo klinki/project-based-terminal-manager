@@ -9,7 +9,7 @@ We will build a Windows desktop application that organizes other applications in
 
 ## Technical Context
 
-**Language/Version**: C# / .NET 8  
+**Language/Version**: C# / .NET 10  
 **Primary Dependencies**: Win32 API (User32.dll), PInvoke.User32  
 **Storage**: JSON files (local app data)  
 **Testing**: xUnit  

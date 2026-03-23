@@ -87,7 +87,7 @@ function Build-DotNetProjects {
         [string]$BuildConfiguration
     )
 
-    Assert-CommandAvailable -CommandName "dotnet" -InstallHint "Install the .NET 8 SDK and make sure 'dotnet' is on PATH."
+    Assert-CommandAvailable -CommandName "dotnet" -InstallHint "Install the .NET 10 SDK and make sure 'dotnet' is on PATH."
 
     foreach ($project in $dotNetProjects) {
         Assert-PathExists -Path $project -Description "Project file"
@@ -117,10 +117,10 @@ function Ensure-FrontendDependencies {
 }
 
 function Build-ElectroBunView {
-    Assert-CommandAvailable -CommandName "dotnet" -InstallHint "Install the .NET 8 SDK and make sure 'dotnet' is on PATH."
+    Assert-CommandAvailable -CommandName "dotnet" -InstallHint "Install the .NET 10 SDK and make sure 'dotnet' is on PATH."
     Ensure-FrontendDependencies
 
-    # The ElectroBun session manager resolves the helper from bin/Debug/net8.0-windows.
+    # The ElectroBun session manager resolves the helper from bin/Debug/net10.0-windows.
     Invoke-ExternalCommand `
         -FilePath "dotnet" `
         -ArgumentList @(
@@ -135,7 +135,7 @@ function Build-ElectroBunView {
 }
 
 function Build-ElectroBunDesktop {
-    Assert-CommandAvailable -CommandName "dotnet" -InstallHint "Install the .NET 8 SDK and make sure 'dotnet' is on PATH."
+    Assert-CommandAvailable -CommandName "dotnet" -InstallHint "Install the .NET 10 SDK and make sure 'dotnet' is on PATH."
     Ensure-FrontendDependencies
     Invoke-ExternalCommand -FilePath "bun" -ArgumentList @("run", "build:desktop") -WorkingDirectory $frontendDir
 }
@@ -166,15 +166,15 @@ Write-Host "Build completed successfully." -ForegroundColor Green
 Write-Host "Target: $Target"
 
 if ($Target -eq "All" -or $Target -eq "DotNet") {
-    Write-Host "WPF app output: src\TerminalWindowManager.App\bin\$Configuration\net8.0-windows\"
-    Write-Host "ConPTY host output: src\TerminalWindowManager.ConPTYHost\bin\$Configuration\net8.0-windows\"
+    Write-Host "WPF app output: src\TerminalWindowManager.App\bin\$Configuration\net10.0-windows\"
+    Write-Host "ConPTY host output: src\TerminalWindowManager.ConPTYHost\bin\$Configuration\net10.0-windows\"
 }
 
 if ($Target -eq "All" -or $Target -eq "ElectroBun") {
-    Write-Host "ElectroBun helper output: src\TerminalWindowManager.ConPTYHost\bin\Debug\net8.0-windows\"
+    Write-Host "ElectroBun helper output: src\TerminalWindowManager.ConPTYHost\bin\Debug\net10.0-windows\"
     Write-Host "ElectroBun web assets: src\TerminalWindowManager.ElectroBun\dist\"
 }
 
 if ($Target -eq "Desktop") {
-    Write-Host "ElectroBun desktop package: src\TerminalWindowManager.ElectroBun\build\"
+    Write-Host "ElectroBun desktop package: src\TerminalWindowManager.ElectroBun\artifacts\stable-win-x64-*.zip"
 }

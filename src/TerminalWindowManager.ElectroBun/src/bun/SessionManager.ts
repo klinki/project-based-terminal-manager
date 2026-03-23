@@ -101,6 +101,11 @@ export class SessionManager {
 		});
 
 		child.on("error", (error) => {
+			if (this.sessions.get(terminal.id) !== liveSession) {
+				outputReader.close();
+				return;
+			}
+
 			this.sessions.delete(terminal.id);
 			outputReader.close();
 			terminal.status = "error";
@@ -112,6 +117,11 @@ export class SessionManager {
 		});
 
 		child.on("exit", (code) => {
+			if (this.sessions.get(terminal.id) !== liveSession) {
+				outputReader.close();
+				return;
+			}
+
 			this.sessions.delete(terminal.id);
 			outputReader.close();
 			if (terminal.status !== "exited" || terminal.lastExitCode !== code) {
@@ -162,6 +172,10 @@ export class SessionManager {
 		await this.ensureSession(terminal, cols, rows);
 	}
 
+	async stopTerminal(terminalId: string): Promise<void> {
+		await this.stopSession(terminalId);
+	}
+
 	async stopAll(): Promise<void> {
 		await Promise.all(
 			Array.from(this.sessions.keys()).map((terminalId) =>
@@ -176,6 +190,7 @@ export class SessionManager {
 			return;
 		}
 
+		session.outputReader.close();
 		session.child.stdin.write(`${JSON.stringify({ type: "shutdown" })}\n`, "utf8");
 		session.child.stdin.end();
 		session.child.kill();
@@ -187,7 +202,7 @@ export class SessionManager {
 			"TerminalWindowManager.ConPTYHost",
 			"bin",
 			"Debug",
-			"net8.0-windows",
+			"net10.0-windows",
 			"TerminalWindowManager.ConPTYHost.exe",
 		];
 

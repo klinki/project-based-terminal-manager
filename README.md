@@ -17,10 +17,10 @@ Use the root `build.ps1` script for repeatable builds of the active projects. Th
 
 ## Prerequisites
 
-The active projects are Windows-only. The WPF application and the ConPTY helper both target `net8.0-windows`.
+The active projects are Windows-only. The WPF application and the ConPTY helper both target `net10.0-windows`.
 
 - Windows 10 or Windows 11
-- .NET 8 SDK
+- .NET 10 SDK
 - Bun 1.x
 - PowerShell
 
@@ -45,7 +45,7 @@ The default target builds:
 - the ConPTY helper again in `Debug` for the ElectroBun workflow
 - the ElectroBun web assets into `src/TerminalWindowManager.ElectroBun/dist`
 
-The extra `Debug` helper build is intentional. The current ElectroBun session manager resolves the helper from `src/TerminalWindowManager.ConPTYHost/bin/Debug/net8.0-windows/TerminalWindowManager.ConPTYHost.exe`.
+The extra `Debug` helper build is intentional. The current ElectroBun session manager resolves the helper from `src/TerminalWindowManager.ConPTYHost/bin/Debug/net10.0-windows/TerminalWindowManager.ConPTYHost.exe`.
 
 ### Useful Targets
 
@@ -61,7 +61,7 @@ Build only the ElectroBun view assets and the required ConPTY helper:
 .\build.ps1 -Target ElectroBun
 ```
 
-Create the packaged ElectroBun desktop build:
+Create the packaged ElectroBun Windows release build:
 
 ```powershell
 .\build.ps1 -Target Desktop
@@ -81,11 +81,11 @@ Build the `.NET` projects in `Debug` instead of `Release`:
 
 ## Output Locations
 
-- WPF app: `src/TerminalWindowManager.App/bin/<Configuration>/net8.0-windows/`
-- ConPTY host: `src/TerminalWindowManager.ConPTYHost/bin/<Configuration>/net8.0-windows/`
-- ElectroBun helper used during development: `src/TerminalWindowManager.ConPTYHost/bin/Debug/net8.0-windows/`
+- WPF app: `src/TerminalWindowManager.App/bin/<Configuration>/net10.0-windows/`
+- ConPTY host: `src/TerminalWindowManager.ConPTYHost/bin/<Configuration>/net10.0-windows/`
+- ElectroBun helper used during development: `src/TerminalWindowManager.ConPTYHost/bin/Debug/net10.0-windows/`
 - ElectroBun web bundle: `src/TerminalWindowManager.ElectroBun/dist/`
-- ElectroBun packaged desktop build: `src/TerminalWindowManager.ElectroBun/build/`
+- ElectroBun packaged desktop release: `src/TerminalWindowManager.ElectroBun/artifacts/stable-win-x64-*.zip`
 
 ## Running During Development
 

@@ -10,7 +10,7 @@
 		"dev": "bun run build:host && vite build && electrobun dev --watch",
 		"dev:hmr": "bun run build:host && concurrently \"bun run hmr\" \"electrobun dev\"",
 		"hmr": "vite --port 5173",
-		"build:desktop": "bun run build:host && vite build && electrobun build --env=canary"
+		"build:desktop": "bun run build:host && vite build && electrobun build --env=stable"
 	},
 	"dependencies": {
 		"@xterm/addon-fit": "^0.11.0",
