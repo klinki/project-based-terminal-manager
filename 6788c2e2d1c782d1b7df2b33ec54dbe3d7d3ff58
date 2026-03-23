@@ -1,0 +1,34 @@
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.15",
+  "base_commit_sha": "6788c2e2d1c782d1b7df2b33ec54dbe3d7d3ff58",
+  "prompts": {
+    "53ef9574fd930856": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d065a-2125-74f0-89ae-65e12d2bbc9f",
+        "model": "gpt-5.4"
+      },
+      "human_author": "David Klingenberg <dklingenberg@gmail.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 5,
+      "overriden_lines": 0
+    },
+    "fe6cef21238f82f6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d1cab-b677-7a80-9afa-276b8ab4173f",
+        "model": "gpt-5.4-mini"
+      },
+      "human_author": "David Klingenberg <dklingenberg@gmail.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 0,
+      "overriden_lines": 0
+    }
+  }
+}
