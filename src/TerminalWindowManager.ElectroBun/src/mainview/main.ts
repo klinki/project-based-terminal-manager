@@ -19,7 +19,8 @@ const rpc = Electroview.defineRPC<TerminalManagerRpc>({
 			stateChanged: (nextState) => {
 				state = nextState;
 				reconcileSelection();
-				reconcileProjectEditing();
+				reconcileSidebarState();
+				pruneTerminalViews();
 				renderTree();
 				renderInspector();
 				renderStatusBoard();
@@ -80,7 +81,14 @@ let layoutSyncScheduled = false;
 let editingProjectId: string | null = null;
 let editingProjectDraft = "";
 let shouldFocusProjectEditor = false;
+let editingTerminalId: string | null = null;
+let editingTerminalDraft = "";
+let shouldFocusTerminalEditor = false;
+let activateTerminalAfterRenameId: string | null = null;
 const collapsedProjectIds = new Set<string>();
+let contextMenuState: { kind: "project" | "terminal"; id: string } | null = null;
+let pendingConfirmResolve: ((confirmed: boolean) => void) | null = null;
+let pendingRenameResolve: ((value: string | null) => void) | null = null;
 
 const terminalViews = new Map<string, TerminalView>();
 const utf8Decoder = new TextDecoder();
@@ -183,6 +191,29 @@ app.innerHTML = `
 				<div id="terminal-stack" class="terminal-stack"></div>
 			</section>
 		</main>
+
+		<div id="sidebar-context-menu" class="context-menu hidden" role="menu" aria-hidden="true"></div>
+		<dialog id="confirm-dialog" class="confirm-dialog">
+			<form method="dialog" class="confirm-dialog-panel">
+				<h3 id="confirm-dialog-title" class="confirm-dialog-title">Confirm action</h3>
+				<p id="confirm-dialog-message" class="confirm-dialog-message"></p>
+				<div class="confirm-dialog-actions">
+					<button id="confirm-dialog-cancel" class="secondary-button" value="cancel">Cancel</button>
+					<button id="confirm-dialog-confirm" class="danger-button" value="confirm">Delete</button>
+				</div>
+			</form>
+		</dialog>
+		<dialog id="rename-dialog" class="confirm-dialog">
+			<form method="dialog" class="confirm-dialog-panel">
+				<h3 id="rename-dialog-title" class="confirm-dialog-title">Rename</h3>
+				<p id="rename-dialog-message" class="confirm-dialog-message"></p>
+				<input id="rename-dialog-input" class="dialog-input" type="text" />
+				<div class="confirm-dialog-actions">
+					<button class="secondary-button" value="cancel">Cancel</button>
+					<button id="rename-dialog-confirm" class="primary-button" value="confirm">Rename</button>
+				</div>
+			</form>
+		</dialog>
 	</div>
 `;
 
@@ -208,6 +239,22 @@ const restartTerminalButton =
 const terminalStage = queryHtmlElement<HTMLElement>("terminal-stage");
 const terminalEmpty = queryHtmlElement<HTMLDivElement>("terminal-empty");
 const terminalStack = queryHtmlElement<HTMLDivElement>("terminal-stack");
+const sidebarContextMenu =
+	queryHtmlElement<HTMLDivElement>("sidebar-context-menu");
+const confirmDialog = queryHtmlElement<HTMLDialogElement>("confirm-dialog");
+const confirmDialogTitle =
+	queryHtmlElement<HTMLHeadingElement>("confirm-dialog-title");
+const confirmDialogMessage =
+	queryHtmlElement<HTMLParagraphElement>("confirm-dialog-message");
+const confirmDialogConfirm =
+	queryHtmlElement<HTMLButtonElement>("confirm-dialog-confirm");
+const renameDialog = queryHtmlElement<HTMLDialogElement>("rename-dialog");
+const renameDialogTitle =
+	queryHtmlElement<HTMLHeadingElement>("rename-dialog-title");
+const renameDialogMessage =
+	queryHtmlElement<HTMLParagraphElement>("rename-dialog-message");
+const renameDialogInput =
+	queryHtmlElement<HTMLInputElement>("rename-dialog-input");
 
 const terminalStageResizeObserver = new ResizeObserver(() => {
 	scheduleSelectedTerminalLayoutSync();
@@ -270,50 +317,125 @@ projectTreeElement.addEventListener("dblclick", (event) => {
 
 projectTreeElement.addEventListener("submit", (event) => {
 	const target = event.target as HTMLElement;
-	const form = target.closest<HTMLFormElement>("[data-project-edit-form]");
-	if (!form) {
+	const projectForm = target.closest<HTMLFormElement>("[data-project-edit-form]");
+	if (projectForm) {
+		event.preventDefault();
+		void commitProjectRename(projectForm.dataset.projectEditForm!);
+		return;
+	}
+
+	const terminalForm = target.closest<HTMLFormElement>("[data-terminal-edit-form]");
+	if (!terminalForm) {
 		return;
 	}
 
 	event.preventDefault();
-	void commitProjectRename(form.dataset.projectEditForm!);
+	void commitTerminalRename(terminalForm.dataset.terminalEditForm!);
 });
 
 projectTreeElement.addEventListener("input", (event) => {
 	const target = event.target as HTMLInputElement;
-	if (!target.matches("[data-project-edit-input]")) {
+	if (target.matches("[data-project-edit-input]")) {
+		editingProjectDraft = target.value;
 		return;
 	}
 
-	editingProjectDraft = target.value;
+	if (target.matches("[data-terminal-edit-input]")) {
+		editingTerminalDraft = target.value;
+	}
 });
 
 projectTreeElement.addEventListener("keydown", (event) => {
 	const target = event.target as HTMLElement;
-	if (!target.matches("[data-project-edit-input]")) {
+	if (target.matches("[data-project-edit-input]")) {
+		if (event.key === "Escape") {
+			event.preventDefault();
+			cancelProjectRename();
+		}
 		return;
 	}
 
-	if (event.key === "Escape") {
+	if (target.matches("[data-terminal-edit-input]") && event.key === "Escape") {
 		event.preventDefault();
-		cancelProjectRename();
+		void cancelTerminalRename();
 	}
 });
 
 projectTreeElement.addEventListener("focusout", (event) => {
 	const target = event.target as HTMLElement;
-	if (!target.matches("[data-project-edit-input]")) {
+	if (target.matches("[data-project-edit-input]")) {
+		const projectId = (target as HTMLInputElement).dataset.projectEditInput!;
+		const nextTarget = event.relatedTarget as Node | null;
+		const form = target.closest<HTMLFormElement>("[data-project-edit-form]");
+		if (form && nextTarget && form.contains(nextTarget)) {
+			return;
+		}
+
+		void commitProjectRename(projectId);
 		return;
 	}
 
-	const projectId = (target as HTMLInputElement).dataset.projectEditInput!;
+	if (!target.matches("[data-terminal-edit-input]")) {
+		return;
+	}
+
+	const terminalId = (target as HTMLInputElement).dataset.terminalEditInput!;
 	const nextTarget = event.relatedTarget as Node | null;
-	const form = target.closest<HTMLFormElement>("[data-project-edit-form]");
+	const form = target.closest<HTMLFormElement>("[data-terminal-edit-form]");
 	if (form && nextTarget && form.contains(nextTarget)) {
 		return;
 	}
 
-	void commitProjectRename(projectId);
+	void commitTerminalRename(terminalId);
+});
+
+projectTreeElement.addEventListener("contextmenu", (event) => {
+	const target = event.target as HTMLElement;
+	const terminalButton = target.closest<HTMLButtonElement>("[data-terminal-id]");
+	if (terminalButton) {
+		event.preventDefault();
+		showContextMenu(
+			{ kind: "terminal", id: terminalButton.dataset.terminalId! },
+			event.clientX,
+			event.clientY,
+		);
+		return;
+	}
+
+	const projectRow = target.closest<HTMLElement>("[data-project-row-id]");
+	if (projectRow) {
+		event.preventDefault();
+		showContextMenu(
+			{ kind: "project", id: projectRow.dataset.projectRowId! },
+			event.clientX,
+			event.clientY,
+		);
+	}
+});
+
+sidebarContextMenu.addEventListener("click", (event) => {
+	const target = event.target as HTMLElement;
+	const actionButton = target.closest<HTMLButtonElement>("[data-context-action]");
+	if (!actionButton || !contextMenuState) {
+		return;
+	}
+
+	if (actionButton.dataset.contextAction === "rename") {
+		if (contextMenuState.kind === "project") {
+			void renameProjectFromMenu(contextMenuState.id);
+		} else {
+			void renameTerminal(contextMenuState.id);
+		}
+		return;
+	}
+
+	if (actionButton.dataset.contextAction === "delete") {
+		if (contextMenuState.kind === "project") {
+			void deleteProject(contextMenuState.id);
+		} else {
+			void deleteTerminal(contextMenuState.id);
+		}
+	}
 });
 
 restartTerminalButton.addEventListener("click", async () => {
@@ -337,7 +459,43 @@ restartTerminalButton.addEventListener("click", async () => {
 });
 
 window.addEventListener("resize", () => {
+	hideContextMenu();
 	scheduleSelectedTerminalLayoutSync();
+});
+
+window.addEventListener("click", (event) => {
+	const target = event.target as HTMLElement;
+	if (sidebarContextMenu.contains(target)) {
+		return;
+	}
+
+	hideContextMenu();
+});
+
+window.addEventListener("blur", () => {
+	hideContextMenu();
+});
+
+confirmDialog.addEventListener("close", () => {
+	const resolver = pendingConfirmResolve;
+	pendingConfirmResolve = null;
+	if (!resolver) {
+		return;
+	}
+
+	resolver(confirmDialog.returnValue === "confirm");
+});
+
+renameDialog.addEventListener("close", () => {
+	const resolver = pendingRenameResolve;
+	pendingRenameResolve = null;
+	if (!resolver) {
+		return;
+	}
+
+	resolver(
+		renameDialog.returnValue === "confirm" ? renameDialogInput.value.trim() : null,
+	);
 });
 
 bootstrap().catch((error: unknown) => {
@@ -349,6 +507,8 @@ bootstrap().catch((error: unknown) => {
 async function bootstrap(): Promise<void> {
 	state = await getRendererRpc().proxy.request.getInitialState({});
 	reconcileSelection();
+	reconcileSidebarState();
+	pruneTerminalViews();
 	renderTree();
 	renderInspector();
 	renderStatusBoard();
@@ -387,18 +547,38 @@ function reconcileSelection(): void {
 	selection = null;
 }
 
-function reconcileProjectEditing(): void {
-	if (!editingProjectId) {
-		return;
+function reconcileSidebarState(): void {
+	for (const projectId of [...collapsedProjectIds]) {
+		if (!findProject(projectId)) {
+			collapsedProjectIds.delete(projectId);
+		}
 	}
 
-	if (findProject(editingProjectId)) {
-		return;
+	if (contextMenuState) {
+		const stillExists =
+			contextMenuState.kind === "project"
+				? Boolean(findProject(contextMenuState.id))
+				: state.terminals.some((terminal) => terminal.id === contextMenuState?.id);
+		if (!stillExists) {
+			hideContextMenu();
+		}
 	}
 
-	editingProjectId = null;
-	editingProjectDraft = "";
-	shouldFocusProjectEditor = false;
+	if (editingProjectId && !findProject(editingProjectId)) {
+		editingProjectId = null;
+		editingProjectDraft = "";
+		shouldFocusProjectEditor = false;
+	}
+
+	if (
+		editingTerminalId &&
+		!state.terminals.some((terminal) => terminal.id === editingTerminalId)
+	) {
+		editingTerminalId = null;
+		editingTerminalDraft = "";
+		shouldFocusTerminalEditor = false;
+		activateTerminalAfterRenameId = null;
+	}
 }
 
 function toggleProjectCollapsed(projectId: string): void {
@@ -409,6 +589,203 @@ function toggleProjectCollapsed(projectId: string): void {
 	}
 
 	renderTree();
+}
+
+function showContextMenu(
+	target: { kind: "project" | "terminal"; id: string },
+	clientX: number,
+	clientY: number,
+): void {
+	contextMenuState = target;
+	const renameLabel =
+		target.kind === "project" ? "Rename project" : "Rename console";
+	const deleteLabel =
+		target.kind === "project" ? "Delete project" : "Delete console";
+	sidebarContextMenu.innerHTML = `
+		<button type="button" class="context-menu-item" data-context-action="rename">
+			${renameLabel}
+		</button>
+		<button type="button" class="context-menu-item danger" data-context-action="delete">
+			${deleteLabel}
+		</button>
+	`;
+	sidebarContextMenu.classList.remove("hidden");
+	sidebarContextMenu.setAttribute("aria-hidden", "false");
+
+	const horizontalPadding = 12;
+	const verticalPadding = 12;
+	const menuWidth = 190;
+	const menuHeight = 88;
+	sidebarContextMenu.style.left = `${Math.min(clientX, window.innerWidth - menuWidth - horizontalPadding)}px`;
+	sidebarContextMenu.style.top = `${Math.min(clientY, window.innerHeight - menuHeight - verticalPadding)}px`;
+}
+
+function hideContextMenu(): void {
+	contextMenuState = null;
+	sidebarContextMenu.classList.add("hidden");
+	sidebarContextMenu.setAttribute("aria-hidden", "true");
+	sidebarContextMenu.innerHTML = "";
+}
+
+async function renameProjectFromMenu(projectId: string): Promise<void> {
+	const project = findProject(projectId);
+	if (!project) {
+		return;
+	}
+
+	hideContextMenu();
+	const nextName = await showRenameDialog({
+		title: "Rename project",
+		message: "Choose a new project name.",
+		initialValue: project.name,
+		confirmLabel: "Rename project",
+	});
+	if (!nextName || nextName === project.name) {
+		return;
+	}
+
+	state = await getRendererRpc().proxy.request.renameProject({
+		projectId,
+		name: nextName,
+	});
+	renderTree();
+	renderInspector();
+	renderStatusBoard();
+	setStatus(`Project renamed to '${nextName}'.`);
+}
+
+async function renameTerminal(terminalId: string): Promise<void> {
+	const terminal = state.terminals.find((candidate) => candidate.id === terminalId);
+	if (!terminal) {
+		return;
+	}
+
+	hideContextMenu();
+	const nextName = await showRenameDialog({
+		title: "Rename console",
+		message: "Choose a new console name.",
+		initialValue: terminal.name,
+		confirmLabel: "Rename console",
+	});
+	if (!nextName || nextName === terminal.name) {
+		return;
+	}
+
+	state = await getRendererRpc().proxy.request.renameTerminal({
+		terminalId,
+		name: nextName,
+	});
+	renderTree();
+	renderInspector();
+	renderStatusBoard();
+	setStatus(`Console renamed to '${nextName}'.`);
+}
+
+async function deleteProject(projectId: string): Promise<void> {
+	const project = findProject(projectId);
+	if (!project) {
+		return;
+	}
+
+	const terminalCount = state.terminals.filter(
+		(terminal) => terminal.projectId === project.id,
+	).length;
+	const confirmed = await showConfirmationDialog({
+		title: "Delete project?",
+		message:
+			terminalCount > 0
+				? `Delete '${project.name}' and its ${terminalCount} console${terminalCount === 1 ? "" : "s"}? This cannot be undone.`
+				: `Delete '${project.name}'? This cannot be undone.`,
+		confirmLabel: "Delete project",
+	});
+	if (!confirmed) {
+		return;
+	}
+
+	hideContextMenu();
+	state = await getRendererRpc().proxy.request.deleteProject({ projectId });
+	reconcileSelection();
+	reconcileSidebarState();
+	pruneTerminalViews();
+	renderTree();
+	renderInspector();
+	renderStatusBoard();
+	setStatus(`Deleted project '${project.name}'.`);
+}
+
+async function deleteTerminal(terminalId: string): Promise<void> {
+	const terminal = state.terminals.find((candidate) => candidate.id === terminalId);
+	if (!terminal) {
+		return;
+	}
+
+	const confirmed = await showConfirmationDialog({
+		title: "Delete console?",
+		message: `Delete '${terminal.name}' from '${findProject(terminal.projectId)?.name ?? "Unknown project"}'? This cannot be undone.`,
+		confirmLabel: "Delete console",
+	});
+	if (!confirmed) {
+		return;
+	}
+
+	hideContextMenu();
+	state = await getRendererRpc().proxy.request.deleteTerminal({ terminalId });
+	reconcileSelection();
+	reconcileSidebarState();
+	pruneTerminalViews();
+	renderTree();
+	renderInspector();
+	renderStatusBoard();
+	setStatus(`Deleted console '${terminal.name}'.`);
+}
+
+function showConfirmationDialog(options: {
+	title: string;
+	message: string;
+	confirmLabel: string;
+}): Promise<boolean> {
+	if (pendingConfirmResolve) {
+		pendingConfirmResolve(false);
+		pendingConfirmResolve = null;
+	}
+
+	confirmDialogTitle.textContent = options.title;
+	confirmDialogMessage.textContent = options.message;
+	confirmDialogConfirm.textContent = options.confirmLabel;
+	confirmDialog.returnValue = "cancel";
+	confirmDialog.showModal();
+	return new Promise<boolean>((resolve) => {
+		pendingConfirmResolve = resolve;
+	});
+}
+
+function showRenameDialog(options: {
+	title: string;
+	message: string;
+	initialValue: string;
+	confirmLabel: string;
+}): Promise<string | null> {
+	if (pendingRenameResolve) {
+		pendingRenameResolve(null);
+		pendingRenameResolve = null;
+	}
+
+	renameDialogTitle.textContent = options.title;
+	renameDialogMessage.textContent = options.message;
+	renameDialogInput.value = options.initialValue;
+	const renameDialogConfirm = queryHtmlElement<HTMLButtonElement>(
+		"rename-dialog-confirm",
+	);
+	renameDialogConfirm.textContent = options.confirmLabel;
+	renameDialog.returnValue = "cancel";
+	renameDialog.showModal();
+	requestAnimationFrame(() => {
+		renameDialogInput.focus();
+		renameDialogInput.select();
+	});
+	return new Promise<string | null>((resolve) => {
+		pendingRenameResolve = resolve;
+	});
 }
 
 async function createProjectAndBeginRename(): Promise<void> {
@@ -429,9 +806,31 @@ async function createProjectAndBeginRename(): Promise<void> {
 
 function startEditingProject(projectId: string, currentName: string): void {
 	selection = { kind: "project", id: projectId };
+	editingTerminalId = null;
+	editingTerminalDraft = "";
+	shouldFocusTerminalEditor = false;
+	activateTerminalAfterRenameId = null;
 	editingProjectId = projectId;
 	editingProjectDraft = currentName;
 	shouldFocusProjectEditor = true;
+	renderTree();
+	renderInspector();
+	renderStatusBoard();
+}
+
+function startEditingTerminal(
+	terminalId: string,
+	currentName: string,
+	options?: { activateOnCommit?: boolean },
+): void {
+	selection = { kind: "terminal", id: terminalId };
+	editingProjectId = null;
+	editingProjectDraft = "";
+	shouldFocusProjectEditor = false;
+	editingTerminalId = terminalId;
+	editingTerminalDraft = currentName;
+	shouldFocusTerminalEditor = true;
+	activateTerminalAfterRenameId = options?.activateOnCommit ? terminalId : null;
 	renderTree();
 	renderInspector();
 	renderStatusBoard();
@@ -475,6 +874,65 @@ async function commitProjectRename(projectId: string): Promise<void> {
 	renderInspector();
 	renderStatusBoard();
 	setStatus(`Project renamed to '${finalName}'.`);
+}
+
+async function cancelTerminalRename(): Promise<void> {
+	const terminal = editingTerminalId
+		? state.terminals.find((candidate) => candidate.id === editingTerminalId)
+		: undefined;
+	const shouldActivate = Boolean(
+		terminal && activateTerminalAfterRenameId === terminal.id,
+	);
+	editingTerminalId = null;
+	editingTerminalDraft = "";
+	shouldFocusTerminalEditor = false;
+	activateTerminalAfterRenameId = null;
+	renderTree();
+	if (terminal) {
+		setStatus(`Kept console name '${terminal.name}'.`);
+		if (shouldActivate) {
+			await selectTerminal(terminal.id);
+		}
+	}
+}
+
+async function commitTerminalRename(terminalId: string): Promise<void> {
+	if (editingTerminalId !== terminalId) {
+		return;
+	}
+
+	const terminal = state.terminals.find((candidate) => candidate.id === terminalId);
+	if (!terminal) {
+		editingTerminalId = null;
+		editingTerminalDraft = "";
+		shouldFocusTerminalEditor = false;
+		activateTerminalAfterRenameId = null;
+		renderTree();
+		return;
+	}
+
+	const finalName = editingTerminalDraft.trim() || terminal.name;
+	const shouldActivate = activateTerminalAfterRenameId === terminal.id;
+	editingTerminalId = null;
+	editingTerminalDraft = "";
+	shouldFocusTerminalEditor = false;
+	activateTerminalAfterRenameId = null;
+
+	if (finalName !== terminal.name) {
+		state = await getRendererRpc().proxy.request.renameTerminal({
+			terminalId,
+			name: finalName,
+		});
+	}
+
+	renderTree();
+	renderInspector();
+	renderStatusBoard();
+	setStatus(`Console renamed to '${finalName}'.`);
+
+	if (shouldActivate) {
+		await selectTerminal(terminalId);
+	}
 }
 
 async function createConsoleFromSelection(): Promise<void> {
@@ -526,8 +984,8 @@ async function createConsoleFromProject(projectId: string): Promise<void> {
 		throw new Error("The newly created console could not be resolved.");
 	}
 
-	await selectTerminal(terminal.id);
-	setStatus(`Started '${terminal.name}' in '${project.name}'.`);
+	startEditingTerminal(terminal.id, terminal.name, { activateOnCommit: true });
+	setStatus(`Created '${terminal.name}' in '${project.name}'. Type a console name and press Enter to launch it.`);
 }
 
 async function selectTerminal(terminalId: string): Promise<void> {
@@ -624,29 +1082,53 @@ function renderTree(): void {
 					? `<li class="tree-empty">No consoles</li>`
 					: terminals
 							.map(
-								(terminal) => `
-									<li>
-										<button
-											type="button"
-											class="tree-terminal-button ${selection?.kind === "terminal" && selection.id === terminal.id ? "active" : ""}"
-											data-terminal-id="${terminal.id}">
-											<div class="tree-terminal-copy">
-												<span class="tree-terminal-title">${escapeHtml(terminal.name)}</span>
-												<span class="tree-terminal-detail">${escapeHtml(terminal.activity.summary)}</span>
-											</div>
-											<div class="tree-terminal-meta">
-												<span class="activity-chip compact ${terminal.activity.phase}">${formatActivityPhase(terminal.activity.phase)}</span>
-												<span class="tree-terminal-time">${formatRelativeTime(getTerminalRecency(terminal))}</span>
-											</div>
-										</button>
-									</li>
-								`,
+								(terminal) => {
+									const isTerminalEditing = editingTerminalId === terminal.id;
+									if (isTerminalEditing) {
+										return `
+											<li>
+												<div class="tree-terminal-shell active">
+													<form class="tree-terminal-form" data-terminal-edit-form="${terminal.id}">
+														<input
+															class="tree-terminal-input"
+															data-terminal-edit-input="${terminal.id}"
+															type="text"
+															value="${escapeHtmlAttribute(editingTerminalDraft)}"
+															aria-label="Console name" />
+													</form>
+													<div class="tree-terminal-meta">
+														<span class="activity-chip compact ${terminal.activity.phase}">${formatActivityPhase(terminal.activity.phase)}</span>
+														<span class="tree-terminal-time">${formatRelativeTime(getTerminalRecency(terminal))}</span>
+													</div>
+												</div>
+											</li>
+										`;
+									}
+
+									return `
+										<li>
+											<button
+												type="button"
+												class="tree-terminal-button ${selection?.kind === "terminal" && selection.id === terminal.id ? "active" : ""}"
+												data-terminal-id="${terminal.id}">
+												<div class="tree-terminal-copy">
+													<span class="tree-terminal-title">${escapeHtml(terminal.name)}</span>
+													<span class="tree-terminal-detail">${escapeHtml(terminal.activity.summary)}</span>
+												</div>
+												<div class="tree-terminal-meta">
+													<span class="activity-chip compact ${terminal.activity.phase}">${formatActivityPhase(terminal.activity.phase)}</span>
+													<span class="tree-terminal-time">${formatRelativeTime(getTerminalRecency(terminal))}</span>
+												</div>
+											</button>
+										</li>
+									`;
+								},
 							)
 							.join("");
 
 			return `
 				<li class="tree-node">
-					<div class="tree-project-row">
+					<div class="tree-project-row" data-project-row-id="${project.id}">
 						${projectLabel}
 						<button
 							type="button"
@@ -667,6 +1149,7 @@ function renderTree(): void {
 		.join("");
 
 	focusProjectEditorIfNeeded();
+	focusTerminalEditorIfNeeded();
 }
 
 function renderInspector(): void {
@@ -743,6 +1226,19 @@ function renderStatusBoard(): void {
 		: "No console selected";
 	statusBanner.textContent = statusMessage;
 	scheduleSelectedTerminalLayoutSync();
+}
+
+function pruneTerminalViews(): void {
+	const activeTerminalIds = new Set(state.terminals.map((terminal) => terminal.id));
+	for (const [terminalId, terminalView] of terminalViews) {
+		if (activeTerminalIds.has(terminalId)) {
+			continue;
+		}
+
+		terminalView.terminal.dispose();
+		terminalView.wrapper.remove();
+		terminalViews.delete(terminalId);
+	}
 }
 
 function ensureTerminalView(terminalId: string): TerminalView {
@@ -830,6 +1326,25 @@ function focusProjectEditorIfNeeded(): void {
 	requestAnimationFrame(() => {
 		const input = projectTreeElement.querySelector<HTMLInputElement>(
 			`[data-project-edit-input="${editingProjectId}"]`,
+		);
+		if (!input) {
+			return;
+		}
+
+		input.focus();
+		input.select();
+	});
+}
+
+function focusTerminalEditorIfNeeded(): void {
+	if (!shouldFocusTerminalEditor || !editingTerminalId) {
+		return;
+	}
+
+	shouldFocusTerminalEditor = false;
+	requestAnimationFrame(() => {
+		const input = projectTreeElement.querySelector<HTMLInputElement>(
+			`[data-terminal-edit-input="${editingTerminalId}"]`,
 		);
 		if (!input) {
 			return;

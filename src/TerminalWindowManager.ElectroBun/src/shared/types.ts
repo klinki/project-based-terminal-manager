@@ -72,6 +72,10 @@ export type TerminalManagerRpc = {
 				params: { projectId: string; name: string };
 				response: AppState;
 			};
+			deleteProject: {
+				params: { projectId: string };
+				response: AppState;
+			};
 			createTerminal: {
 				params: {
 					projectId: string;
@@ -79,6 +83,14 @@ export type TerminalManagerRpc = {
 					cwd: string;
 					shell?: string;
 				};
+				response: AppState;
+			};
+			renameTerminal: {
+				params: { terminalId: string; name: string };
+				response: AppState;
+			};
+			deleteTerminal: {
+				params: { terminalId: string };
 				response: AppState;
 			};
 			activateTerminal: {

@@ -69,6 +69,37 @@ const rpc = BrowserView.defineRPC<TerminalManagerRpc>({
 				return snapshotState();
 			},
 
+			deleteProject: async ({ projectId }) => {
+				const project = findProject(projectId);
+				const projectTerminals = state.terminals.filter(
+					(terminal) => terminal.projectId === project.id,
+				);
+
+				await Promise.all(
+					projectTerminals.map(async (terminal) => {
+						clearActivityTimer(terminal.id);
+						await sessionManager.stopTerminal(terminal.id);
+					}),
+				);
+
+				state.projects = state.projects.filter(
+					(candidate) => candidate.id !== project.id,
+				);
+				state.terminals = state.terminals.filter(
+					(terminal) => terminal.projectId !== project.id,
+				);
+
+				if (
+					state.activeTerminalId &&
+					projectTerminals.some((terminal) => terminal.id === state.activeTerminalId)
+				) {
+					state.activeTerminalId = null;
+				}
+
+				persistState();
+				return snapshotState();
+			},
+
 			createTerminal: ({ projectId, name, cwd, shell }) => {
 				const project = findProject(projectId);
 				const trimmedName = name.trim();
@@ -99,6 +130,34 @@ const rpc = BrowserView.defineRPC<TerminalManagerRpc>({
 					createdAt: new Date().toISOString(),
 					lastStartedAt: null,
 				});
+
+				persistState();
+				return snapshotState();
+			},
+
+			renameTerminal: ({ terminalId, name }) => {
+				const terminal = findTerminal(terminalId);
+				const trimmedName = name.trim();
+				if (!trimmedName) {
+					throw new Error("Terminal name cannot be empty.");
+				}
+
+				terminal.name = trimmedName;
+				persistState();
+				return snapshotState();
+			},
+
+			deleteTerminal: async ({ terminalId }) => {
+				const terminal = findTerminal(terminalId);
+				clearActivityTimer(terminal.id);
+				await sessionManager.stopTerminal(terminal.id);
+
+				state.terminals = state.terminals.filter(
+					(candidate) => candidate.id !== terminal.id,
+				);
+				if (state.activeTerminalId === terminal.id) {
+					state.activeTerminalId = null;
+				}
 
 				persistState();
 				return snapshotState();
