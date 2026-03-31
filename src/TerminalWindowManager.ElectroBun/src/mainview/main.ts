@@ -86,6 +86,7 @@ let editingTerminalDraft = "";
 let shouldFocusTerminalEditor = false;
 let activateTerminalAfterRenameId: string | null = null;
 const collapsedProjectIds = new Set<string>();
+let inspectorCollapsed = false;
 let contextMenuState: { kind: "project" | "terminal"; id: string } | null = null;
 let pendingConfirmResolve: ((confirmed: boolean) => void) | null = null;
 let pendingRenameResolve: ((value: string | null) => void) | null = null;
@@ -154,33 +155,44 @@ app.innerHTML = `
 		</aside>
 
 		<main class="workspace">
-			<section class="panel">
-				<div class="panel-content info-card">
-					<div>
-						<h1 id="selection-title" class="heading">Select a console</h1>
-						<p id="selection-subtitle" class="subheading">Sessions stay alive once started so you can switch back and forth quickly.</p>
-					</div>
-					<div class="toolbar">
-						<button id="restart-terminal" class="secondary-button" disabled>Restart selected console</button>
-					</div>
-					<dl id="selection-metadata" class="metadata-grid"></dl>
-				</div>
-			</section>
-
-			<section class="status-board">
-				<div class="status-board-main">
+			<section id="inspector-panel" class="inspector-panel">
+				<div class="inspector-header">
+					<button id="inspector-toggle" class="inspector-toggle" type="button" title="Toggle details">
+						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+							<polyline points="6 9 12 15 18 9"></polyline>
+						</svg>
+					</button>
 					<div id="activity-indicator" class="activity-indicator idle" aria-hidden="true"></div>
-					<div class="status-copy">
-						<h2 id="activity-title" class="status-heading">Console telemetry inactive</h2>
-						<p id="activity-detail" class="status-detail">Select a console to inspect live session status.</p>
+					<div class="inspector-header-copy">
+						<h1 id="selection-title" class="inspector-title">Select a console</h1>
+						<p id="selection-subtitle" class="inspector-subtitle">Sessions stay alive once started so you can switch back and forth quickly.</p>
 					</div>
-					<div class="status-meta">
+					<div class="inspector-header-actions">
 						<span id="activity-chip" class="activity-chip idle">Idle</span>
-						<span id="activity-updated" class="status-updated">No activity yet</span>
+						<button id="restart-terminal" class="icon-button" disabled title="Restart console">
+							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+								<polyline points="23 4 23 10 17 10"></polyline>
+								<path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+							</svg>
+						</button>
 					</div>
 				</div>
-				<div class="status-banner" id="status-banner">
-					Booting Terminal Window Manager ElectroBun proof of concept...
+				<div id="inspector-body" class="inspector-body">
+					<div class="inspector-details">
+						<dl id="selection-metadata" class="metadata-grid"></dl>
+					</div>
+					<div class="inspector-status">
+						<div class="inspector-status-row">
+							<div class="status-copy">
+								<span id="activity-title" class="status-heading">Console telemetry inactive</span>
+								<span id="activity-detail" class="status-detail">Select a console to inspect live session status.</span>
+							</div>
+							<span id="activity-updated" class="status-updated">No activity yet</span>
+						</div>
+						<div class="status-banner" id="status-banner">
+							Booting Terminal Window Manager ElectroBun proof of concept...
+						</div>
+					</div>
 				</div>
 			</section>
 
@@ -236,6 +248,9 @@ const activityChip = queryHtmlElement<HTMLElement>("activity-chip");
 const activityUpdated = queryHtmlElement<HTMLElement>("activity-updated");
 const restartTerminalButton =
 	queryHtmlElement<HTMLButtonElement>("restart-terminal");
+const inspectorPanel = queryHtmlElement<HTMLElement>("inspector-panel");
+const inspectorBody = queryHtmlElement<HTMLElement>("inspector-body");
+const inspectorToggle = queryHtmlElement<HTMLButtonElement>("inspector-toggle");
 const terminalStage = queryHtmlElement<HTMLElement>("terminal-stage");
 const terminalEmpty = queryHtmlElement<HTMLDivElement>("terminal-empty");
 const terminalStack = queryHtmlElement<HTMLDivElement>("terminal-stack");
@@ -260,6 +275,12 @@ const terminalStageResizeObserver = new ResizeObserver(() => {
 	scheduleSelectedTerminalLayoutSync();
 });
 terminalStageResizeObserver.observe(terminalStage);
+
+inspectorToggle.addEventListener("click", () => {
+	inspectorCollapsed = !inspectorCollapsed;
+	inspectorPanel.classList.toggle("collapsed", inspectorCollapsed);
+	scheduleSelectedTerminalLayoutSync();
+});
 
 newProjectButton.addEventListener("click", () => {
 	void createProjectAndBeginRename();
