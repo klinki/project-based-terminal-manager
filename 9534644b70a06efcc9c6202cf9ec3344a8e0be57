@@ -1,0 +1,40 @@
+src/TerminalWindowManager.ElectroBun/src/bun/index.ts
+  54392c71865893cb 7-10,13,137-139,425,427,430,434,436,442,449,455,462-468,472,506-515,517-518,520-530,532-533,535-540,542-550,552-553
+src/TerminalWindowManager.ElectroBun/src/mainview/style.css
+  54392c71865893cb 704-708,710-714
+src/TerminalWindowManager.ElectroBun/src/mainview/main.ts
+  54392c71865893cb 41-48,53-68,1228-1243,1260-1271,1521-1523
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.3",
+  "base_commit_sha": "9534644b70a06efcc9c6202cf9ec3344a8e0be57",
+  "prompts": {
+    "30782dd42047fba5": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d4aa6-2497-7282-91c8-5bf1ecd1bb5d",
+        "model": "unknown"
+      },
+      "human_author": "David Klingenberg",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 71,
+      "overriden_lines": 0
+    },
+    "54392c71865893cb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d4aa5-d924-7520-bb39-04e3892407bd",
+        "model": "gpt-5.4"
+      },
+      "human_author": "David Klingenberg",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 189,
+      "overriden_lines": 10
+    }
+  }
+}
