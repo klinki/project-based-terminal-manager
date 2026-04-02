@@ -701,6 +701,20 @@ input {
 	text-overflow: ellipsis;
 }
 
+.metadata-grid dd.metadata-wrap {
+	white-space: normal;
+	overflow: visible;
+	text-overflow: clip;
+}
+
+.metadata-pre {
+	margin: 0;
+	font: inherit;
+	white-space: pre-wrap;
+	word-break: break-word;
+	color: var(--text);
+}
+
 .status-copy {
 	display: flex;
 	align-items: baseline;

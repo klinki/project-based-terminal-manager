@@ -4,8 +4,13 @@ import type {
 	ProjectRecord,
 	TerminalActivity,
 	TerminalActivityPhase,
+	TerminalCommandFailure,
+	TerminalDiagnosticNoticeMessage,
+	TerminalErrorMessage,
+	TerminalExitMessage,
 	TerminalManagerRpc,
 	TerminalRecord,
+	TerminalStartedMessage,
 } from "../shared/types";
 import { AppStateStore } from "./AppStateStore";
 import { SessionManager } from "./SessionManager";
@@ -129,6 +134,9 @@ const rpc = BrowserView.defineRPC<TerminalManagerRpc>({
 					lastExitCode: null,
 					createdAt: new Date().toISOString(),
 					lastStartedAt: null,
+					diagnosticLogPath: null,
+					lastCommandFailure: null,
+					lastSessionFailure: null,
 				});
 
 				persistState();
@@ -414,41 +422,54 @@ const sessionManager = new SessionManager({
 		});
 		await getWebviewRpc().proxy.send.terminalOutput(message);
 	},
-	onStarted: async (terminalId) => {
+	onStarted: async (message: TerminalStartedMessage) => {
 		updateTerminalActivity(
-			terminalId,
+			message.terminalId,
 			"waiting",
 			"Ready",
-			"Shell started successfully and is waiting for input.",
+			`Shell started successfully (PID ${message.shellPid}) and is waiting for input.`,
 			100,
 			false,
 		);
-		await getWebviewRpc().proxy.send.terminalStarted({ terminalId });
+		await getWebviewRpc().proxy.send.terminalStarted(message);
 	},
-	onExit: async (message) => {
+	onExit: async (message: TerminalExitMessage) => {
 		clearActivityTimer(message.terminalId);
 		updateTerminalActivity(
 			message.terminalId,
 			"idle",
 			"Session exited",
-			`The shell exited with code ${message.exitCode ?? "unknown"}.`,
+			describeSessionExit(message),
 			100,
 			false,
 		);
 		await getWebviewRpc().proxy.send.terminalExit(message);
 		await pushStateChanged();
 	},
-	onError: async (message) => {
+	onError: async (message: TerminalErrorMessage) => {
 		clearActivityTimer(message.terminalId);
 		updateTerminalActivity(
 			message.terminalId,
 			"attention",
 			"Session error",
-			message.message,
+			describeSessionError(message),
 			100,
 			false,
 		);
 		await getWebviewRpc().proxy.send.terminalError(message);
+		await pushStateChanged();
+	},
+	onDiagnosticNotice: async (message: TerminalDiagnosticNoticeMessage) => {
+		const terminal = findTerminal(message.terminalId);
+		updateTerminalActivity(
+			message.terminalId,
+			"attention",
+			"Command failed",
+			describeCommandFailure(terminal.lastCommandFailure),
+			100,
+			false,
+		);
+		await getWebviewRpc().proxy.send.terminalDiagnosticNotice(message);
 		await pushStateChanged();
 	},
 	onStateChanged: async () => {
@@ -481,3 +502,52 @@ process.on("exit", () => {
 });
 
 console.log("Terminal Window Manager ElectroBun PoC started.");
+
+function describeSessionExit(message: TerminalExitMessage): string {
+	const details = [
+		`The shell exited with code ${message.exitCode ?? "unknown"}.`,
+	];
+	if (message.stderrExcerpt) {
+		details.push(`Helper stderr: ${message.stderrExcerpt}`);
+	}
+	if (message.recentOutputExcerpt) {
+		details.push(`Recent output: ${message.recentOutputExcerpt}`);
+	}
+
+	return details.join(" ");
+}
+
+function describeSessionError(message: TerminalErrorMessage): string {
+	const details = [message.message];
+	if (message.win32ErrorCode !== null) {
+		details.push(`Win32 ${message.win32ErrorCode}.`);
+	}
+	if (message.hresult !== null) {
+		details.push(`HRESULT ${message.hresult}.`);
+	}
+	if (message.recentOutputExcerpt) {
+		details.push(`Recent output: ${message.recentOutputExcerpt}`);
+	}
+
+	return details.join(" ");
+}
+
+function describeCommandFailure(
+	failure: TerminalCommandFailure | null,
+): string {
+	if (!failure) {
+		return "The shell reported a failed command.";
+	}
+
+	const details = [
+		failure.commandText || "A command failed.",
+	];
+	if (failure.exitCode !== null) {
+		details.push(`Exit ${failure.exitCode}.`);
+	}
+	if (failure.errorMessage) {
+		details.push(failure.errorMessage);
+	}
+
+	return details.join(" ");
+}

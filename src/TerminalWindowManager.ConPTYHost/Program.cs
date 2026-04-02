@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
@@ -24,13 +25,15 @@ internal static class Program
         };
 
         var writerTask = WriteMessagesAsync(outboundMessages.Reader, writer);
+        CommandLineOptions? options = null;
 
         try
         {
-            var options = CommandLineOptions.Parse(args);
+            options = CommandLineOptions.Parse(args);
 
             using var session = new ConPtySession(
                 options.ShellPath,
+                BuildShellArguments(options),
                 options.WorkingDirectory,
                 options.Columns,
                 options.Rows);
@@ -47,10 +50,14 @@ internal static class Program
             outboundMessages.Writer.TryWrite(new
             {
                 type = "started",
-                pid = session.ProcessId
+                sessionId = options.SessionId,
+                shellPid = session.ProcessId,
+                shellPath = options.ShellPath,
+                diagnosticLogPath = options.DiagnosticsLogPath,
+                startedAt = DateTimeOffset.UtcNow.ToString("O")
             });
 
-            var commandLoopTask = ProcessCommandsAsync(session, outboundMessages.Writer);
+            var commandLoopTask = ProcessCommandsAsync(session, outboundMessages.Writer, options);
             var exitTask = session.WaitForExitAsync();
 
             var completedTask = await Task.WhenAny(commandLoopTask, exitTask);
@@ -63,7 +70,13 @@ internal static class Program
             outboundMessages.Writer.TryWrite(new
             {
                 type = "exit",
-                exitCode
+                sessionId = options.SessionId,
+                exitCode,
+                exitedAt = DateTimeOffset.UtcNow.ToString("O"),
+                shellPid = session.ProcessId,
+                shellPath = options.ShellPath,
+                diagnosticLogPath = options.DiagnosticsLogPath,
+                stderrExcerpt = (string?)null
             });
 
             outboundMessages.Writer.Complete();
@@ -72,11 +85,7 @@ internal static class Program
         }
         catch (Exception exception)
         {
-            outboundMessages.Writer.TryWrite(new
-            {
-                type = "error",
-                message = exception.Message
-            });
+            outboundMessages.Writer.TryWrite(CreateErrorEvent(exception, options));
             outboundMessages.Writer.Complete();
             await writerTask;
             return 1;
@@ -85,7 +94,8 @@ internal static class Program
 
     private static async Task ProcessCommandsAsync(
         ConPtySession session,
-        ChannelWriter<object> outboundMessages)
+        ChannelWriter<object> outboundMessages,
+        CommandLineOptions options)
     {
         using var reader = new StreamReader(
             Console.OpenStandardInput(),
@@ -109,7 +119,15 @@ internal static class Program
                 outboundMessages.TryWrite(new
                 {
                     type = "error",
-                    message = $"Invalid control message: {jsonException.Message}"
+                    sessionId = options.SessionId,
+                    message = $"Invalid control message: {jsonException.Message}",
+                    diagnosticLogPath = options.DiagnosticsLogPath,
+                    exceptionType = typeof(JsonException).FullName,
+                    hresult = jsonException.HResult,
+                    win32ErrorCode = (int?)null,
+                    occurredAt = DateTimeOffset.UtcNow.ToString("O"),
+                    shellPath = options.ShellPath,
+                    shellPid = (int?)null
                 });
                 continue;
             }
@@ -119,7 +137,15 @@ internal static class Program
                 outboundMessages.TryWrite(new
                 {
                     type = "error",
-                    message = "Received an empty control message."
+                    sessionId = options.SessionId,
+                    message = "Received an empty control message.",
+                    diagnosticLogPath = options.DiagnosticsLogPath,
+                    exceptionType = typeof(InvalidOperationException).FullName,
+                    hresult = (int?)null,
+                    win32ErrorCode = (int?)null,
+                    occurredAt = DateTimeOffset.UtcNow.ToString("O"),
+                    shellPath = options.ShellPath,
+                    shellPid = (int?)null
                 });
                 continue;
             }
@@ -166,5 +192,39 @@ internal static class Program
             var line = JsonSerializer.Serialize(message, SerializerOptions);
             await writer.WriteLineAsync(line);
         }
+    }
+
+    private static object CreateErrorEvent(Exception exception, CommandLineOptions? options)
+    {
+        return new
+        {
+            type = "error",
+            sessionId = options?.SessionId,
+            message = exception.Message,
+            diagnosticLogPath = options?.DiagnosticsLogPath,
+            exceptionType = exception.GetType().FullName,
+            hresult = exception.HResult,
+            win32ErrorCode = exception is Win32Exception win32Exception
+                ? win32Exception.NativeErrorCode
+                : (int?)null,
+            occurredAt = DateTimeOffset.UtcNow.ToString("O"),
+            shellPath = options?.ShellPath,
+            shellPid = (int?)null
+        };
+    }
+
+    private static string? BuildShellArguments(CommandLineOptions options)
+    {
+        if (string.IsNullOrWhiteSpace(options.PowerShellBootstrapPath))
+        {
+            return null;
+        }
+
+        return $"-NoLogo -NoExit -File {QuoteArgument(options.PowerShellBootstrapPath)}";
+    }
+
+    private static string QuoteArgument(string value)
+    {
+        return $"\"{value.Replace("\"", "\\\"", StringComparison.Ordinal)}\"";
     }
 }

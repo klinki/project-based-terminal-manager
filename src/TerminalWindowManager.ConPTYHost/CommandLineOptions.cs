@@ -5,6 +5,10 @@ namespace TerminalWindowManager.ConPTYHost;
 internal sealed record CommandLineOptions(
     string WorkingDirectory,
     string ShellPath,
+    string SessionId,
+    string DiagnosticsDirectory,
+    string DiagnosticsLogPath,
+    string? PowerShellBootstrapPath,
     short Columns,
     short Rows)
 {
@@ -39,10 +43,36 @@ internal sealed record CommandLineOptions(
 
         var shellPath = ShellPathResolver.Resolve(
             values.TryGetValue("shell", out var shell) ? shell : null);
+        var sessionId = values.TryGetValue("session-id", out var rawSessionId) &&
+            !string.IsNullOrWhiteSpace(rawSessionId)
+            ? rawSessionId.Trim()
+            : Guid.NewGuid().ToString();
+        var diagnosticsDirectory = values.TryGetValue("diagnostics-dir", out var rawDiagnosticsDirectory) &&
+            !string.IsNullOrWhiteSpace(rawDiagnosticsDirectory)
+            ? Path.GetFullPath(rawDiagnosticsDirectory)
+            : Path.Combine(workingDirectory, ".twm-diagnostics", sessionId);
+
+        Directory.CreateDirectory(diagnosticsDirectory);
+
+        var diagnosticsLogPath = Path.Combine(diagnosticsDirectory, "events.jsonl");
+        var powerShellBootstrapPath = values.TryGetValue("powershell-bootstrap", out var rawBootstrapPath) &&
+            !string.IsNullOrWhiteSpace(rawBootstrapPath)
+            ? Path.GetFullPath(rawBootstrapPath)
+            : null;
+
+        if (powerShellBootstrapPath is not null && !File.Exists(powerShellBootstrapPath))
+        {
+            throw new FileNotFoundException(
+                $"PowerShell bootstrap script '{powerShellBootstrapPath}' could not be located.");
+        }
 
         return new CommandLineOptions(
             workingDirectory,
             shellPath,
+            sessionId,
+            diagnosticsDirectory,
+            diagnosticsLogPath,
+            powerShellBootstrapPath,
             ParseDimension(values, "cols", 120, 20, 500),
             ParseDimension(values, "rows", 30, 5, 200));
     }

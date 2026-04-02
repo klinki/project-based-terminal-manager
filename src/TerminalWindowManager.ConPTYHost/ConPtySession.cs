@@ -25,6 +25,7 @@ internal sealed class ConPtySession : IDisposable
 
     public ConPtySession(
         string shellPath,
+        string? shellArguments,
         string workingDirectory,
         short columns,
         short rows)
@@ -51,7 +52,11 @@ internal sealed class ConPtySession : IDisposable
         _inputWriter = new FileStream(_inputWriterHandle, FileAccess.Write, 4096, false);
         _outputReader = new FileStream(_outputReaderHandle, FileAccess.Read, 4096, false);
 
-        _processInformation = StartProcess(shellPath, workingDirectory, _pseudoConsole);
+        _processInformation = StartProcess(
+            shellPath,
+            shellArguments,
+            workingDirectory,
+            _pseudoConsole);
         _outputPump = Task.Run(PumpOutputAsync);
         _exitTask = Task.Run(WaitForExitInternal);
     }
@@ -174,6 +179,7 @@ internal sealed class ConPtySession : IDisposable
 
     private static PROCESS_INFORMATION StartProcess(
         string shellPath,
+        string? shellArguments,
         string workingDirectory,
         IntPtr pseudoConsole)
     {
@@ -184,10 +190,10 @@ internal sealed class ConPtySession : IDisposable
             var securityAttributeSize = Marshal.SizeOf<SECURITY_ATTRIBUTES>();
             var processSecurity = new SECURITY_ATTRIBUTES { nLength = securityAttributeSize };
             var threadSecurity = new SECURITY_ATTRIBUTES { nLength = securityAttributeSize };
-            var commandLine = $"\"{shellPath}\"";
+            var commandLine = BuildCommandLine(shellPath, shellArguments);
 
             if (!CreateProcess(
-                    lpApplicationName: null,
+                    lpApplicationName: shellPath,
                     lpCommandLine: commandLine,
                     lpProcessAttributes: ref processSecurity,
                     lpThreadAttributes: ref threadSecurity,
@@ -211,6 +217,21 @@ internal sealed class ConPtySession : IDisposable
                 Marshal.FreeHGlobal(startupInfo.lpAttributeList);
             }
         }
+    }
+
+    private static string BuildCommandLine(string shellPath, string? shellArguments)
+    {
+        if (string.IsNullOrWhiteSpace(shellArguments))
+        {
+            return QuoteArgument(shellPath);
+        }
+
+        return $"{QuoteArgument(shellPath)} {shellArguments}";
+    }
+
+    private static string QuoteArgument(string value)
+    {
+        return $"\"{value.Replace("\"", "\\\"", StringComparison.Ordinal)}\"";
     }
 
     private static STARTUPINFOEX ConfigureProcessThread(IntPtr pseudoConsole)

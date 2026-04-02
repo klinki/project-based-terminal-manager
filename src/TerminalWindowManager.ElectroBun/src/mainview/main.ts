@@ -38,10 +38,34 @@ const rpc = Electroview.defineRPC<TerminalManagerRpc>({
 				terminalView.terminal.writeln(
 					`\r\n[session exited with code ${exitCode ?? "unknown"}]`,
 				);
+				const terminal = state.terminals.find(
+					(candidate) => candidate.id === terminalId,
+				);
+				if (terminal) {
+					setStatus(
+						`Console '${terminal.name}' exited with code ${exitCode ?? "unknown"}.`,
+					);
+				}
 			},
 			terminalError: ({ terminalId, message }) => {
 				const terminalView = ensureTerminalView(terminalId);
 				terminalView.terminal.writeln(`\r\n[error] ${message}`);
+				const terminal = state.terminals.find(
+					(candidate) => candidate.id === terminalId,
+				);
+				if (terminal) {
+					setStatus(`Console '${terminal.name}' reported an error.`);
+				}
+			},
+			terminalDiagnosticNotice: ({ terminalId, message }) => {
+				const terminalView = ensureTerminalView(terminalId);
+				terminalView.terminal.writeln(`\r\n[diagnostic] ${message}`);
+				const terminal = state.terminals.find(
+					(candidate) => candidate.id === terminalId,
+				);
+				if (terminal) {
+					setStatus(`Console '${terminal.name}': ${message}`);
+				}
 			},
 		},
 	},
@@ -1201,6 +1225,23 @@ function renderInspector(): void {
 	const selectedTerminal = getSelectedTerminal();
 
 	if (selectedTerminal) {
+		const failureTime =
+			selectedTerminal.lastCommandFailure?.timestamp ??
+			selectedTerminal.lastSessionFailure?.timestamp ??
+			null;
+		const failureExitCode =
+			selectedTerminal.lastCommandFailure?.exitCode ??
+			selectedTerminal.lastSessionFailure?.exitCode ??
+			null;
+		const errorMessage =
+			selectedTerminal.lastCommandFailure?.errorMessage ??
+			selectedTerminal.lastSessionFailure?.message ??
+			null;
+		const recentOutputExcerpt =
+			selectedTerminal.lastCommandFailure?.recentOutputExcerpt ||
+			selectedTerminal.lastSessionFailure?.recentOutputExcerpt ||
+			"";
+
 		selectionTitle.textContent = selectedTerminal.name;
 		selectionSubtitle.textContent = `Project: ${findProject(selectedTerminal.projectId)?.name ?? "Unknown"} | Session state: ${formatStatus(selectedTerminal.status)} | Activity: ${selectedTerminal.activity.summary}`;
 		selectionMetadata.innerHTML = `
@@ -1216,6 +1257,18 @@ function renderInspector(): void {
 			<dd>${new Date(selectedTerminal.activity.updatedAt).toLocaleString()}</dd>
 			<dt>Last exit code</dt>
 			<dd>${selectedTerminal.lastExitCode ?? "N/A"}</dd>
+			<dt>Last failed command</dt>
+			<dd class="metadata-wrap">${renderOptionalCodeBlock(selectedTerminal.lastCommandFailure?.commandText)}</dd>
+			<dt>Failure time</dt>
+			<dd>${failureTime ? new Date(failureTime).toLocaleString() : "None recorded"}</dd>
+			<dt>Failure exit code</dt>
+			<dd>${failureExitCode ?? "N/A"}</dd>
+			<dt>Error message</dt>
+			<dd class="metadata-wrap">${renderOptionalCodeBlock(errorMessage)}</dd>
+			<dt>Recent output excerpt</dt>
+			<dd class="metadata-wrap">${renderOptionalCodeBlock(recentOutputExcerpt)}</dd>
+			<dt>Diagnostic log path</dt>
+			<dd class="metadata-wrap">${renderOptionalCodeBlock(selectedTerminal.diagnosticLogPath)}</dd>
 		`;
 		restartTerminalButton.disabled = false;
 		terminalEmpty.style.display = terminalViews.has(selectedTerminal.id)
@@ -1462,6 +1515,14 @@ function getTerminalRecency(terminal: TerminalRecord): number {
 function setStatus(message: string): void {
 	statusMessage = message;
 	renderStatusBoard();
+}
+
+function renderOptionalCodeBlock(value: string | null | undefined): string {
+	if (!value || !value.trim()) {
+		return "None recorded";
+	}
+
+	return `<pre class="metadata-pre">${escapeHtml(value)}</pre>`;
 }
 
 function scheduleSelectedTerminalLayoutSync(): void {
