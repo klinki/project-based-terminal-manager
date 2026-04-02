@@ -1,0 +1,29 @@
+.release-please-manifest.json
+  fe6cef21238f82f6 1-2
+release-please-config.json
+  fe6cef21238f82f6 9
+.github/workflows/release-please.yml
+  fe6cef21238f82f6 37
+src/TerminalWindowManager.ElectroBun/package.json
+  fe6cef21238f82f6 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.3",
+  "base_commit_sha": "75767a15718c1da52869926625653eddc4fdacf0",
+  "prompts": {
+    "fe6cef21238f82f6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d1cab-b677-7a80-9afa-276b8ab4173f",
+        "model": "gpt-5.4-mini"
+      },
+      "human_author": "David Klingenberg",
+      "messages": [],
+      "total_additions": 92,
+      "total_deletions": 90,
+      "accepted_lines": 66,
+      "overriden_lines": 0
+    }
+  }
+}
