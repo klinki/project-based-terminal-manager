@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - "feat/**"
+      - "codex/**"
+  pull_request:
+
+jobs:
+  windows-build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install ElectroBun dependencies
+        working-directory: src/TerminalWindowManager.ElectroBun
+        run: bun install --frozen-lockfile
+
+      - name: Build Windows targets
+        shell: pwsh
+        run: ./build.ps1 -Target All
+
+  macos-electrobun:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install ElectroBun dependencies
+        working-directory: src/TerminalWindowManager.ElectroBun
+        run: bun install --frozen-lockfile
+
+      - name: Build ElectroBun macOS target
+        shell: pwsh
+        run: ./build.ps1 -Target ElectroBun

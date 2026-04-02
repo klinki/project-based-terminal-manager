@@ -1,6 +1,28 @@
 import type { ElectrobunConfig } from "electrobun";
 import packageJson from "./package.json";
 
+function resolveTargetOs(): "win" | "macos" | "linux" {
+	const configuredTarget = process.env["ELECTROBUN_OS"];
+	if (
+		configuredTarget === "win" ||
+		configuredTarget === "macos" ||
+		configuredTarget === "linux"
+	) {
+		return configuredTarget;
+	}
+
+	switch (process.platform) {
+		case "darwin":
+			return "macos";
+		case "win32":
+			return "win";
+		default:
+			return "linux";
+	}
+}
+
+const targetOs = resolveTargetOs();
+
 export default {
 	app: {
 		name: "Terminal Window Manager ElectroBun",
@@ -11,8 +33,12 @@ export default {
 		copy: {
 			"dist/index.html": "views/mainview/index.html",
 			"dist/assets": "views/mainview/assets",
-			"../TerminalWindowManager.ConPTYHost/bin/Debug/net10.0-windows":
-				"TerminalWindowManager.ConPTYHost/bin/Debug/net10.0-windows",
+			...(targetOs === "win"
+				? {
+						"../TerminalWindowManager.ConPTYHost/bin/Debug/net10.0-windows":
+							"TerminalWindowManager.ConPTYHost/bin/Debug/net10.0-windows",
+				  }
+				: {}),
 		},
 		watchIgnore: [
 			"dist/**",

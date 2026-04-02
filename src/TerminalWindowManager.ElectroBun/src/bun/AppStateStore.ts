@@ -47,10 +47,7 @@ export class AppStateStore {
 	private createDefaults(): AppDefaults {
 		return {
 			defaultCwd: process.cwd(),
-			defaultShell:
-				process.env["COMSPEC"] ||
-				process.env["SHELL"] ||
-				"powershell.exe",
+			defaultShell: this.detectDefaultShell(),
 		};
 	}
 
@@ -87,11 +84,7 @@ export class AppStateStore {
 			projectId: terminal.projectId ?? "",
 			name: terminal.name ?? "Terminal",
 			cwd: terminal.cwd ?? process.cwd(),
-			shell:
-				terminal.shell ||
-				process.env["COMSPEC"] ||
-				process.env["SHELL"] ||
-				"powershell.exe",
+			shell: terminal.shell || this.detectDefaultShell(),
 			status,
 			activity: this.createDefaultActivity(status),
 			lastExitCode: terminal.lastExitCode ?? null,
@@ -119,7 +112,7 @@ export class AppStateStore {
 				return {
 					phase: "working",
 					summary: "Starting session",
-					detail: "Launching terminal helper process.",
+					detail: "Launching the terminal session backend.",
 					progress: 12,
 					isIndeterminate: true,
 					updatedAt: new Date().toISOString(),
@@ -129,7 +122,7 @@ export class AppStateStore {
 				return {
 					phase: "waiting",
 					summary: "Ready",
-					detail: "Shell is running and waiting for input.",
+					detail: "Shell session is running and waiting for input.",
 					progress: 100,
 					isIndeterminate: false,
 					updatedAt: new Date().toISOString(),
@@ -139,7 +132,7 @@ export class AppStateStore {
 				return {
 					phase: "attention",
 					summary: "Error",
-					detail: "The session reported an error.",
+					detail: "The terminal session reported an error.",
 					progress: 100,
 					isIndeterminate: false,
 					updatedAt: new Date().toISOString(),
@@ -149,7 +142,7 @@ export class AppStateStore {
 				return {
 					phase: "idle",
 					summary: "Exited",
-					detail: "The session is no longer running.",
+					detail: "The terminal session is no longer running.",
 					progress: 100,
 					isIndeterminate: false,
 					updatedAt: new Date().toISOString(),
@@ -159,11 +152,27 @@ export class AppStateStore {
 				return {
 					phase: "idle",
 					summary: "Not started",
-					detail: "Activate this terminal to start a live session.",
+					detail: "Activate this terminal to start a live shell session.",
 					progress: 0,
 					isIndeterminate: false,
 					updatedAt: new Date().toISOString(),
 				};
 		}
+	}
+
+	private detectDefaultShell(): string {
+		if (process.platform === "win32") {
+			return (
+				process.env["COMSPEC"] ||
+				process.env["SHELL"] ||
+				"powershell.exe"
+			);
+		}
+
+		if (process.platform === "darwin") {
+			return process.env["SHELL"] || "/bin/zsh";
+		}
+
+		return process.env["SHELL"] || "/bin/bash";
 	}
 }

@@ -2,9 +2,9 @@
 	"name": "terminal-window-manager-electrobun",
 	"version": "0.1.0",
 	"type": "module",
-	"description": "ElectroBun + xterm.js + ConPTY proof of concept for project-based terminal switching.",
+	"description": "ElectroBun + xterm.js desktop terminal manager with Windows and macOS session backends.",
 	"scripts": {
-		"build:host": "dotnet build ../TerminalWindowManager.ConPTYHost/TerminalWindowManager.ConPTYHost.csproj",
+		"build:host": "bun run ./src/bun/scripts/build-host.ts",
 		"build:view": "vite build",
 		"start": "bun run build:host && vite build && electrobun dev",
 		"dev": "bun run build:host && vite build && electrobun dev --watch",
@@ -15,7 +15,8 @@
 	"dependencies": {
 		"@xterm/addon-fit": "^0.11.0",
 		"@xterm/xterm": "^6.0.0",
-		"electrobun": "1.16.0"
+		"electrobun": "1.16.0",
+		"node-pty": "^1.1.0"
 	},
 	"devDependencies": {
 		"@types/three": "^0.181.0",

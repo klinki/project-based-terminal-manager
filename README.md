@@ -13,16 +13,24 @@ Use the root `build.ps1` script for repeatable builds of the active projects. Th
 - `src/TerminalWindowManager.Terminal`: Windows Terminal integration used by the WPF app.
 - `src/TerminalWindowManager.App`: WPF desktop application.
 - `src/TerminalWindowManager.ConPTYHost`: helper process used by the ElectroBun UI to host terminal sessions.
-- `src/TerminalWindowManager.ElectroBun`: ElectroBun proof-of-concept desktop UI.
+- `src/TerminalWindowManager.ElectroBun`: ElectroBun desktop UI and the cross-platform product surface.
 
 ## Prerequisites
 
-The active projects are Windows-only. The WPF application and the ConPTY helper both target `net10.0-windows`.
+Platform support is split by application surface:
 
-- Windows 10 or Windows 11
-- .NET 10 SDK
-- Bun 1.x
-- PowerShell
+- Windows:
+  - WPF application
+  - ElectroBun desktop app
+  - .NET 10 SDK
+  - Bun 1.x
+  - PowerShell
+- macOS:
+  - ElectroBun desktop app only
+  - Bun 1.x
+  - optional PowerShell if you want to use the root `build.ps1` script
+
+The WPF application and the ConPTY helper remain `net10.0-windows` projects.
 
 You can verify the two required toolchains with:
 
@@ -45,7 +53,7 @@ The default target builds:
 - the ConPTY helper again in `Debug` for the ElectroBun workflow
 - the ElectroBun web assets into `src/TerminalWindowManager.ElectroBun/dist`
 
-The extra `Debug` helper build is intentional. The current ElectroBun session manager resolves the helper from `src/TerminalWindowManager.ConPTYHost/bin/Debug/net10.0-windows/TerminalWindowManager.ConPTYHost.exe`.
+The extra `Debug` helper build is intentional on Windows. The ElectroBun Windows backend resolves the helper from `src/TerminalWindowManager.ConPTYHost/bin/Debug/net10.0-windows/TerminalWindowManager.ConPTYHost.exe`.
 
 ### Useful Targets
 
@@ -61,7 +69,9 @@ Build only the ElectroBun view assets and the required ConPTY helper:
 .\build.ps1 -Target ElectroBun
 ```
 
-Create the packaged ElectroBun Windows release build:
+On macOS, the same target builds the ElectroBun app without the Windows helper and uses the Bun-native PTY backend at runtime.
+
+Create the packaged ElectroBun desktop release build:
 
 ```powershell
 .\build.ps1 -Target Desktop
@@ -83,9 +93,9 @@ Build the `.NET` projects in `Debug` instead of `Release`:
 
 - WPF app: `src/TerminalWindowManager.App/bin/<Configuration>/net10.0-windows/`
 - ConPTY host: `src/TerminalWindowManager.ConPTYHost/bin/<Configuration>/net10.0-windows/`
-- ElectroBun helper used during development: `src/TerminalWindowManager.ConPTYHost/bin/Debug/net10.0-windows/`
+- ElectroBun Windows helper used during development: `src/TerminalWindowManager.ConPTYHost/bin/Debug/net10.0-windows/`
 - ElectroBun web bundle: `src/TerminalWindowManager.ElectroBun/dist/`
-- ElectroBun packaged desktop release: `src/TerminalWindowManager.ElectroBun/artifacts/stable-win-x64-*.zip`
+- ElectroBun packaged desktop release: `src/TerminalWindowManager.ElectroBun/artifacts/`
 
 ## Running During Development
 
@@ -102,6 +112,8 @@ Set-Location .\src\TerminalWindowManager.ElectroBun
 bun install
 bun run dev
 ```
+
+On macOS, the same `bun run dev` command uses the `node-pty` backend and defaults to the user's shell or `/bin/zsh`.
 
 For HMR-based frontend development:
 
@@ -121,6 +133,7 @@ bun run dev:hmr
 - `ProjectWindowManager.*` remains in the repository for legacy purposes and is intentionally excluded from the new build script.
 - The root solution file still mixes legacy and active projects.
 - No automated test projects were found under `tests`, so the build script currently focuses on restore/build steps only.
+- The WPF host model and Windows Terminal integration remain Windows-only.
 
 ## Troubleshooting
 

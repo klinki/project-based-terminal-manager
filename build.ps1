@@ -15,6 +15,13 @@ Set-StrictMode -Version Latest
 $repoRoot = Split-Path -Parent $PSCommandPath
 $frontendDir = Join-Path $repoRoot "src\TerminalWindowManager.ElectroBun"
 $conPtyHostProject = Join-Path $repoRoot "src\TerminalWindowManager.ConPTYHost\TerminalWindowManager.ConPTYHost.csproj"
+$isWindowsHost = ($env:OS -eq "Windows_NT")
+if (-not $isWindowsHost) {
+    $isWindowsVariable = Get-Variable -Name "IsWindows" -ErrorAction SilentlyContinue
+    if ($isWindowsVariable -and $isWindowsVariable.Value -eq $true) {
+        $isWindowsHost = $true
+    }
+}
 $dotNetProjects = @(
     Join-Path $repoRoot "src\TerminalWindowManager.Core\TerminalWindowManager.Core.csproj"
     Join-Path $repoRoot "src\TerminalWindowManager.Terminal\TerminalWindowManager.Terminal.csproj"
@@ -23,8 +30,8 @@ $dotNetProjects = @(
 )
 
 function Assert-WindowsHost {
-    if ($env:OS -ne "Windows_NT") {
-        throw "The active TerminalWindowManager projects target Windows-only components (WPF and ConPTY). Run this script on Windows."
+    if (-not $isWindowsHost) {
+        throw "This target requires Windows because it builds WPF or the Windows ConPTY host."
     }
 }
 
@@ -87,6 +94,7 @@ function Build-DotNetProjects {
         [string]$BuildConfiguration
     )
 
+    Assert-WindowsHost
     Assert-CommandAvailable -CommandName "dotnet" -InstallHint "Install the .NET 10 SDK and make sure 'dotnet' is on PATH."
 
     foreach ($project in $dotNetProjects) {
@@ -117,38 +125,46 @@ function Ensure-FrontendDependencies {
 }
 
 function Build-ElectroBunView {
-    Assert-CommandAvailable -CommandName "dotnet" -InstallHint "Install the .NET 10 SDK and make sure 'dotnet' is on PATH."
     Ensure-FrontendDependencies
 
-    # The ElectroBun session manager resolves the helper from bin/Debug/net10.0-windows.
-    Invoke-ExternalCommand `
-        -FilePath "dotnet" `
-        -ArgumentList @(
-            "build",
-            $conPtyHostProject,
-            "--configuration", "Debug",
-            "--nologo",
-            "--verbosity", "minimal"
-        )
+    if ($isWindowsHost) {
+        Assert-CommandAvailable -CommandName "dotnet" -InstallHint "Install the .NET 10 SDK and make sure 'dotnet' is on PATH."
+
+        # The ElectroBun Windows backend resolves the helper from bin/Debug/net10.0-windows.
+        Invoke-ExternalCommand `
+            -FilePath "dotnet" `
+            -ArgumentList @(
+                "build",
+                $conPtyHostProject,
+                "--configuration", "Debug",
+                "--nologo",
+                "--verbosity", "minimal"
+            )
+    }
+    else {
+        Write-Host "==> Skipping Windows ConPTY host build on non-Windows platform" -ForegroundColor DarkGray
+    }
 
     Invoke-ExternalCommand -FilePath "bun" -ArgumentList @("run", "build:view") -WorkingDirectory $frontendDir
 }
 
 function Build-ElectroBunDesktop {
-    Assert-CommandAvailable -CommandName "dotnet" -InstallHint "Install the .NET 10 SDK and make sure 'dotnet' is on PATH."
     Ensure-FrontendDependencies
+    if ($isWindowsHost) {
+        Assert-CommandAvailable -CommandName "dotnet" -InstallHint "Install the .NET 10 SDK and make sure 'dotnet' is on PATH."
+    }
     Invoke-ExternalCommand -FilePath "bun" -ArgumentList @("run", "build:desktop") -WorkingDirectory $frontendDir
 }
 
-Assert-WindowsHost
-
 switch ($Target) {
     "All" {
+        Assert-WindowsHost
         Build-DotNetProjects -BuildConfiguration $Configuration
         Build-ElectroBunView
     }
 
     "DotNet" {
+        Assert-WindowsHost
         Build-DotNetProjects -BuildConfiguration $Configuration
     }
 
@@ -171,10 +187,20 @@ if ($Target -eq "All" -or $Target -eq "DotNet") {
 }
 
 if ($Target -eq "All" -or $Target -eq "ElectroBun") {
-    Write-Host "ElectroBun helper output: src\TerminalWindowManager.ConPTYHost\bin\Debug\net10.0-windows\"
+    if ($isWindowsHost) {
+        Write-Host "ElectroBun helper output: src\TerminalWindowManager.ConPTYHost\bin\Debug\net10.0-windows\"
+    }
+    else {
+        Write-Host "ElectroBun macOS/Linux build uses the Bun-native PTY backend at runtime."
+    }
     Write-Host "ElectroBun web assets: src\TerminalWindowManager.ElectroBun\dist\"
 }
 
 if ($Target -eq "Desktop") {
-    Write-Host "ElectroBun desktop package: src\TerminalWindowManager.ElectroBun\artifacts\stable-win-x64-*.zip"
+    if ($isWindowsHost) {
+        Write-Host "ElectroBun desktop package: src\TerminalWindowManager.ElectroBun\artifacts\stable-win-x64-*.zip"
+    }
+    else {
+        Write-Host "ElectroBun desktop package: src\TerminalWindowManager.ElectroBun\artifacts\"
+    }
 }

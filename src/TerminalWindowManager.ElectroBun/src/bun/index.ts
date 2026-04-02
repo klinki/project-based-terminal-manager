@@ -178,7 +178,7 @@ const rpc = BrowserView.defineRPC<TerminalManagerRpc>({
 					terminal.id,
 					"working",
 					"Starting session",
-					"Launching the ConPTY helper and shell.",
+					"Launching the terminal backend and shell.",
 					14,
 					true,
 				);

@@ -229,7 +229,7 @@ app.innerHTML = `
 
 			<section id="terminal-stage" class="terminal-stage">
 				<div id="terminal-empty" class="terminal-stage-empty">
-					Choose a console on the left to start a live ConPTY-backed session.
+					Choose a console on the left to start a live terminal session.
 				</div>
 				<div id="terminal-stack" class="terminal-stack"></div>
 			</section>
@@ -581,7 +581,7 @@ async function bootstrap(): Promise<void> {
 	renderInspector();
 	renderStatusBoard();
 	setStatus(
-		"Create a project, open a console, and click a console to start a live ConPTY-backed session.",
+		"Create a project, open a console, and click a console to start a live terminal session.",
 	);
 }
 
@@ -1281,7 +1281,7 @@ function renderInspector(): void {
 	if (selectedProject) {
 		selectionTitle.textContent = selectedProject.name;
 		selectionSubtitle.textContent =
-			"Select one of this project's consoles to start or return to a live pseudoterminal session.";
+			"Select one of this project's consoles to start or return to a live shell session.";
 		selectionMetadata.innerHTML = `
 			<dt>Created</dt>
 			<dd>${new Date(selectedProject.createdAt).toLocaleString()}</dd>
@@ -1299,7 +1299,7 @@ function renderInspector(): void {
 
 	selectionTitle.textContent = "Select a console";
 	selectionSubtitle.textContent =
-		"Each console leaf becomes a live ConPTY session once activated.";
+		"Each console leaf becomes a live terminal session once activated.";
 	selectionMetadata.innerHTML = "";
 	restartTerminalButton.disabled = true;
 	terminalEmpty.style.display = "flex";
