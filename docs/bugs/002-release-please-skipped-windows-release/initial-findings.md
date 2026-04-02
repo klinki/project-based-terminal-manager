@@ -12,11 +12,12 @@
   - `.release-please-manifest.json` was empty.
 
 ## Likely Cause
-- release-please is probably treating the repo as already bootstrapped at `0.0.1`, so it has no initial release to create.
-- That would leave `release_created` false and skip the Windows build/upload job.
+- release-please prefixes its outputs for non-root component paths.
+- The workflow was reading `steps.release.outputs.release_created` and `steps.release.outputs.tag_name`, which are correct for root packages but not for `src/TerminalWindowManager.ElectroBun`.
+- Because of that, the job-level output never received the real values and the Windows build/upload job was skipped.
 
 ## Unknowns
-- Whether release-please would also require the package version to be reset to `0.0.0` so the first generated release becomes `0.0.1`.
+- Whether the current bootstrap state also needs to be cleaned up after the output prefix fix, or whether the release-please job will immediately surface the correct `0.0.1` release data on the next run.
 
 ## Reproduction Status
 - Not reproduced locally through GitHub Actions.

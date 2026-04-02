@@ -15,8 +15,8 @@ jobs:
   release_please:
     runs-on: ubuntu-latest
     outputs:
-      release_created: ${{ steps.release.outputs.release_created }}
-      tag_name: ${{ steps.release.outputs.tag_name }}
+      release_created: ${{ steps.release.outputs['src/TerminalWindowManager.ElectroBun--release_created'] }}
+      tag_name: ${{ steps.release.outputs['src/TerminalWindowManager.ElectroBun--tag_name'] }}
     steps:
       - name: Create or update release PR
         id: release
