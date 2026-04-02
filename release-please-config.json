@@ -6,7 +6,7 @@
     "src/TerminalWindowManager.ElectroBun": {
       "release-type": "node",
       "package-name": "terminal-window-manager-electrobun",
-      "initial-version": "0.0.1"
+      "initial-version": "0.0.0"
     }
   }
 }
