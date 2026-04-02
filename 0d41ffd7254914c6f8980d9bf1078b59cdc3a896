@@ -1,0 +1,37 @@
+src/TerminalWindowManager.ElectroBun/src/shared/types.ts
+  30782dd42047fba5 165-167
+  54392c71865893cb 31-39,41-53,66-68,83-90,94,96-100,104-112,114,176,179
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.3",
+  "base_commit_sha": "0d41ffd7254914c6f8980d9bf1078b59cdc3a896",
+  "prompts": {
+    "30782dd42047fba5": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d4aa6-2497-7282-91c8-5bf1ecd1bb5d",
+        "model": "unknown"
+      },
+      "human_author": "David Klingenberg",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 3,
+      "overriden_lines": 0
+    },
+    "54392c71865893cb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d4aa5-d924-7520-bb39-04e3892407bd",
+        "model": "gpt-5.4"
+      },
+      "human_author": "David Klingenberg",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 51,
+      "overriden_lines": 0
+    }
+  }
+}
