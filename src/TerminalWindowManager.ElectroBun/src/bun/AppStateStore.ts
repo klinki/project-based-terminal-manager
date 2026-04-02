@@ -97,6 +97,9 @@ export class AppStateStore {
 			lastExitCode: terminal.lastExitCode ?? null,
 			createdAt: terminal.createdAt ?? new Date().toISOString(),
 			lastStartedAt: terminal.lastStartedAt ?? null,
+			diagnosticLogPath: terminal.diagnosticLogPath ?? null,
+			lastCommandFailure: terminal.lastCommandFailure ?? null,
+			lastSessionFailure: terminal.lastSessionFailure ?? null,
 		};
 	}
 

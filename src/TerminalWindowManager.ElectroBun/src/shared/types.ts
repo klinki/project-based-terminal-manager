@@ -28,6 +28,30 @@ export interface ProjectRecord {
 	createdAt: string;
 }
 
+export interface TerminalCommandFailure {
+	sessionId: string;
+	timestamp: string;
+	commandText: string;
+	exitCode: number | null;
+	errorMessage: string | null;
+	cwd: string;
+	recentOutputExcerpt: string;
+}
+
+export interface TerminalSessionFailure {
+	sessionId: string;
+	timestamp: string;
+	exitCode: number | null;
+	message: string;
+	shellPath: string;
+	shellPid: number | null;
+	stderrExcerpt: string | null;
+	recentOutputExcerpt: string;
+	exceptionType: string | null;
+	hresult: number | null;
+	win32ErrorCode: number | null;
+}
+
 export interface TerminalRecord {
 	id: string;
 	projectId: string;
@@ -39,6 +63,9 @@ export interface TerminalRecord {
 	lastExitCode: number | null;
 	createdAt: string;
 	lastStartedAt: string | null;
+	diagnosticLogPath: string | null;
+	lastCommandFailure: TerminalCommandFailure | null;
+	lastSessionFailure: TerminalSessionFailure | null;
 }
 
 export interface AppState {
@@ -53,12 +80,38 @@ export interface TerminalOutputMessage {
 	dataBase64: string;
 }
 
+export interface TerminalStartedMessage {
+	terminalId: string;
+	sessionId: string;
+	shellPid: number;
+	shellPath: string;
+	diagnosticLogPath: string;
+	startedAt: string;
+}
+
 export interface TerminalExitMessage {
 	terminalId: string;
+	sessionId: string;
 	exitCode: number | null;
+	exitedAt: string;
+	shellPid: number | null;
+	shellPath: string;
+	stderrExcerpt: string | null;
+	recentOutputExcerpt: string;
 }
 
 export interface TerminalErrorMessage {
+	terminalId: string;
+	sessionId: string | null;
+	message: string;
+	diagnosticLogPath: string | null;
+	exceptionType: string | null;
+	hresult: number | null;
+	win32ErrorCode: number | null;
+	recentOutputExcerpt: string;
+}
+
+export interface TerminalDiagnosticNoticeMessage {
 	terminalId: string;
 	message: string;
 }
@@ -109,6 +162,9 @@ export type TerminalManagerRpc = {
 				params: { terminalId: string; cols: number; rows: number };
 				response: AppState;
 			};
+			windowMinimize: { params: {}; response: { ok: boolean } };
+			windowMaximize: { params: {}; response: { ok: boolean } };
+			windowClose: { params: {}; response: { ok: boolean } };
 		};
 		messages: {};
 	}>;
@@ -117,9 +173,10 @@ export type TerminalManagerRpc = {
 		messages: {
 			stateChanged: AppState;
 			terminalOutput: TerminalOutputMessage;
-			terminalStarted: { terminalId: string };
+			terminalStarted: TerminalStartedMessage;
 			terminalExit: TerminalExitMessage;
 			terminalError: TerminalErrorMessage;
+			terminalDiagnosticNotice: TerminalDiagnosticNoticeMessage;
 		};
 	}>;
 };
