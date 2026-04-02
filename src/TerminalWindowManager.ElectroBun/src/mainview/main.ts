@@ -105,16 +105,23 @@ function getRendererRpc() {
 
 app.innerHTML = `
 	<div class="app-shell">
+		<header class="titlebar electrobun-webkit-app-region-drag">
+			<div class="titlebar-title">Terminal Window Manager</div>
+			<div class="titlebar-controls electrobun-webkit-app-region-no-drag">
+				<button id="win-minimize" class="titlebar-button" type="button" title="Minimize">
+					<svg width="10" height="1" viewBox="0 0 10 1"><rect width="10" height="1" fill="currentColor"/></svg>
+				</button>
+				<button id="win-maximize" class="titlebar-button" type="button" title="Maximize">
+					<svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1"><rect x="0.5" y="0.5" width="9" height="9"/></svg>
+				</button>
+				<button id="win-close" class="titlebar-button titlebar-button-close" type="button" title="Close">
+					<svg width="10" height="10" viewBox="0 0 10 10" stroke="currentColor" stroke-width="1.2"><line x1="0" y1="0" x2="10" y2="10"/><line x1="10" y1="0" x2="0" y2="10"/></svg>
+				</button>
+			</div>
+		</header>
+		<div class="app-body">
 		<aside class="sidebar">
 			<div class="sidebar-top">
-				<div class="sidebar-brand">
-					<div class="sidebar-brand-mark">TW</div>
-					<div>
-						<div class="sidebar-brand-title">Terminal Window Manager</div>
-						<div class="sidebar-brand-subtitle">Projects and live consoles</div>
-					</div>
-				</div>
-
 				<div class="sidebar-nav">
 					<button id="new-console-button" class="nav-item nav-item-primary">
 						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -203,6 +210,7 @@ app.innerHTML = `
 				<div id="terminal-stack" class="terminal-stack"></div>
 			</section>
 		</main>
+		</div>
 
 		<div id="sidebar-context-menu" class="context-menu hidden" role="menu" aria-hidden="true"></div>
 		<dialog id="confirm-dialog" class="confirm-dialog">
@@ -270,6 +278,9 @@ const renameDialogMessage =
 	queryHtmlElement<HTMLParagraphElement>("rename-dialog-message");
 const renameDialogInput =
 	queryHtmlElement<HTMLInputElement>("rename-dialog-input");
+const winMinimize = queryHtmlElement<HTMLButtonElement>("win-minimize");
+const winMaximize = queryHtmlElement<HTMLButtonElement>("win-maximize");
+const winClose = queryHtmlElement<HTMLButtonElement>("win-close");
 
 const terminalStageResizeObserver = new ResizeObserver(() => {
 	scheduleSelectedTerminalLayoutSync();
@@ -280,6 +291,18 @@ inspectorToggle.addEventListener("click", () => {
 	inspectorCollapsed = !inspectorCollapsed;
 	inspectorPanel.classList.toggle("collapsed", inspectorCollapsed);
 	scheduleSelectedTerminalLayoutSync();
+});
+
+winMinimize.addEventListener("click", () => {
+	void getRendererRpc().proxy.request.windowMinimize({});
+});
+
+winMaximize.addEventListener("click", () => {
+	void getRendererRpc().proxy.request.windowMaximize({});
+});
+
+winClose.addEventListener("click", () => {
+	void getRendererRpc().proxy.request.windowClose({});
 });
 
 newProjectButton.addEventListener("click", () => {

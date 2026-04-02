@@ -68,10 +68,65 @@ input {
 	padding: 8px 10px;
 }
 
+/* Custom title bar */
+.titlebar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	height: 32px;
+	background: #0e0e0e;
+	border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+	padding: 0 0 0 14px;
+	user-select: none;
+	flex-shrink: 0;
+}
+
+.titlebar-title {
+	font-size: 0.76rem;
+	color: var(--muted);
+	font-weight: 400;
+	letter-spacing: 0.01em;
+}
+
+.titlebar-controls {
+	display: flex;
+	height: 100%;
+}
+
+.titlebar-button {
+	width: 46px;
+	height: 100%;
+	display: grid;
+	place-items: center;
+	background: transparent;
+	color: var(--muted);
+	border: none;
+	border-radius: 0;
+	padding: 0;
+	transition: background 80ms ease;
+}
+
+.titlebar-button:hover {
+	background: rgba(255, 255, 255, 0.08);
+	color: var(--text);
+}
+
+.titlebar-button-close:hover {
+	background: #c42b1c;
+	color: #fff;
+}
+
 .app-shell {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+	min-height: 0;
+}
+
+.app-body {
 	display: grid;
 	grid-template-columns: 280px 1fr;
-	height: 100%;
+	flex: 1;
 	min-height: 0;
 }
 
@@ -86,9 +141,9 @@ input {
 }
 
 .sidebar-top {
-	padding: 12px 12px 4px;
+	padding: 8px 12px 4px;
 	display: grid;
-	gap: 2px;
+	gap: 1px;
 }
 
 .sidebar-brand {
@@ -916,7 +971,7 @@ input {
 }
 
 @media (max-width: 1180px) {
-	.app-shell {
+	.app-body {
 		grid-template-columns: 1fr;
 	}
 

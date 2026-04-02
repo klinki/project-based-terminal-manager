@@ -224,6 +224,25 @@ const rpc = BrowserView.defineRPC<TerminalManagerRpc>({
 				await sessionManager.restartSession(terminal, cols, rows);
 				return snapshotState();
 			},
+
+			windowMinimize: () => {
+				mainWindow.minimize();
+				return { ok: true };
+			},
+
+			windowMaximize: () => {
+				if (mainWindow.isMaximized()) {
+					mainWindow.unmaximize();
+				} else {
+					mainWindow.maximize();
+				}
+				return { ok: true };
+			},
+
+			windowClose: () => {
+				mainWindow.close();
+				return { ok: true };
+			},
 		},
 		messages: {},
 	},
@@ -443,6 +462,7 @@ const url = await getMainViewUrl();
 mainWindow = new BrowserWindow<typeof rpc>({
 	title: "Terminal Window Manager (ElectroBun)",
 	url,
+	titleBarStyle: "hidden",
 	frame: {
 		width: 1480,
 		height: 920,
