@@ -12,22 +12,24 @@ Use the root `build.ps1` script for repeatable builds of the active projects. Th
 - `src/TerminalWindowManager.Core`: shared models and services.
 - `src/TerminalWindowManager.Terminal`: Windows Terminal integration used by the WPF app.
 - `src/TerminalWindowManager.App`: WPF desktop application.
-- `src/TerminalWindowManager.ConPTYHost`: helper process used by the ElectroBun UI to host terminal sessions.
-- `src/TerminalWindowManager.ElectroBun`: ElectroBun proof-of-concept desktop UI.
+- `src/TerminalWindowManager.ConPTYHost`: helper process used by the desktop shells to host terminal sessions.
+- `src/TerminalWindowManager.ElectroBun`: Tauri desktop UI and xterm.js frontend (the project folder still carries the historical ElectroBun name for now).
 
 ## Prerequisites
 
-The active projects are Windows-only. The WPF application and the ConPTY helper both target `net10.0-windows`.
+The active projects are Windows-only.
 
 - Windows 10 or Windows 11
 - .NET 10 SDK
+- Rust toolchain with `cargo`
 - Bun 1.x
 - PowerShell
 
-You can verify the two required toolchains with:
+You can verify the required toolchains with:
 
 ```powershell
 dotnet --version
+cargo --version
 bun --version
 ```
 
@@ -42,10 +44,8 @@ From the repository root:
 The default target builds:
 
 - all active `.NET` projects in `Release`
-- the ConPTY helper again in `Debug` for the ElectroBun workflow
-- the ElectroBun web assets into `src/TerminalWindowManager.ElectroBun/dist`
-
-The extra `Debug` helper build is intentional. The current ElectroBun session manager resolves the helper from `src/TerminalWindowManager.ConPTYHost/bin/Debug/net10.0-windows/TerminalWindowManager.ConPTYHost.exe`.
+- the ConPTY helper in `Release` and copies it into the Tauri resources directory
+- the Tauri frontend bundle into `src/TerminalWindowManager.ElectroBun/dist`
 
 ### Useful Targets
 
@@ -55,22 +55,22 @@ Build only the active `.NET` projects:
 .\build.ps1 -Target DotNet
 ```
 
-Build only the ElectroBun view assets and the required ConPTY helper:
+Build only the Tauri frontend and helper resources:
 
 ```powershell
-.\build.ps1 -Target ElectroBun
+.\build.ps1 -Target Tauri
 ```
 
-Create the packaged ElectroBun Windows release build:
+Create the packaged Tauri Windows release build:
 
 ```powershell
 .\build.ps1 -Target Desktop
 ```
 
-Force a clean frontend dependency install before building ElectroBun:
+Force a clean frontend dependency install before building Tauri:
 
 ```powershell
-.\build.ps1 -Target ElectroBun -ForceFrontendInstall
+.\build.ps1 -Target Tauri -ForceFrontendInstall
 ```
 
 Build the `.NET` projects in `Debug` instead of `Release`:
@@ -78,14 +78,6 @@ Build the `.NET` projects in `Debug` instead of `Release`:
 ```powershell
 .\build.ps1 -Target DotNet -Configuration Debug
 ```
-
-## Output Locations
-
-- WPF app: `src/TerminalWindowManager.App/bin/<Configuration>/net10.0-windows/`
-- ConPTY host: `src/TerminalWindowManager.ConPTYHost/bin/<Configuration>/net10.0-windows/`
-- ElectroBun helper used during development: `src/TerminalWindowManager.ConPTYHost/bin/Debug/net10.0-windows/`
-- ElectroBun web bundle: `src/TerminalWindowManager.ElectroBun/dist/`
-- ElectroBun packaged desktop release: `src/TerminalWindowManager.ElectroBun/artifacts/stable-win-x64-*.zip`
 
 ## Running During Development
 
@@ -95,7 +87,7 @@ Run the WPF application directly:
 dotnet run --project .\src\TerminalWindowManager.App\TerminalWindowManager.App.csproj
 ```
 
-Run the ElectroBun application in development mode:
+Run the Tauri application in development mode:
 
 ```powershell
 Set-Location .\src\TerminalWindowManager.ElectroBun
@@ -103,18 +95,18 @@ bun install
 bun run dev
 ```
 
-For HMR-based frontend development:
+## Output Locations
 
-```powershell
-Set-Location .\src\TerminalWindowManager.ElectroBun
-bun install
-bun run dev:hmr
-```
+- WPF app: `src/TerminalWindowManager.App/bin/<Configuration>/net10.0-windows/`
+- ConPTY host: `src/TerminalWindowManager.ConPTYHost/bin/<Configuration>/net10.0-windows/`
+- Tauri helper resources: `src/TerminalWindowManager.ElectroBun/src-tauri/resources/TerminalWindowManager.ConPTYHost/`
+- Tauri web bundle: `src/TerminalWindowManager.ElectroBun/dist/`
+- Tauri desktop release bundle: `src/TerminalWindowManager.ElectroBun/src-tauri/target/release/bundle/`
 
 ## Data Storage
 
 - The WPF application persists its project catalog under `%LOCALAPPDATA%\TerminalWindowManager\projects.json`.
-- The ElectroBun application persists its state under the Electrobun user-data directory as `terminal-metadata.json`.
+- The Tauri application persists its state under the Tauri app data directory as `terminal-metadata.json`.
 
 ## Known Constraints
 
@@ -124,14 +116,14 @@ bun run dev:hmr
 
 ## Troubleshooting
 
-If the ElectroBun app reports that the ConPTY helper executable is missing, rebuild the ElectroBun target:
+If the Tauri app reports that the ConPTY helper executable is missing, rebuild the Tauri target:
 
 ```powershell
-.\build.ps1 -Target ElectroBun
+.\build.ps1 -Target Tauri
 ```
 
 If Bun dependencies get out of sync, rerun:
 
 ```powershell
-.\build.ps1 -Target ElectroBun -ForceFrontendInstall
+.\build.ps1 -Target Tauri -ForceFrontendInstall
 ```

@@ -1,5 +1,3 @@
-import type { RPCSchema } from "electrobun/bun";
-
 export type TerminalStatus = "stopped" | "starting" | "running" | "exited" | "error";
 export type TerminalActivityPhase =
 	| "idle"
@@ -117,66 +115,49 @@ export interface TerminalDiagnosticNoticeMessage {
 }
 
 export type TerminalManagerRpc = {
-	bun: RPCSchema<{
-		requests: {
-			getInitialState: { params: {}; response: AppState };
-			createProject: { params: { name: string }; response: AppState };
-			renameProject: {
-				params: { projectId: string; name: string };
-				response: AppState;
-			};
-			deleteProject: {
-				params: { projectId: string };
-				response: AppState;
-			};
-			createTerminal: {
-				params: {
-					projectId: string;
-					name: string;
-					cwd: string;
-					shell?: string;
-				};
-				response: AppState;
-			};
-			renameTerminal: {
-				params: { terminalId: string; name: string };
-				response: AppState;
-			};
-			deleteTerminal: {
-				params: { terminalId: string };
-				response: AppState;
-			};
-			activateTerminal: {
-				params: { terminalId: string; cols: number; rows: number };
-				response: AppState;
-			};
-			sendInput: {
-				params: { terminalId: string; data: string };
-				response: { ok: boolean };
-			};
-			resizeTerminal: {
-				params: { terminalId: string; cols: number; rows: number };
-				response: { ok: boolean };
-			};
-			restartTerminal: {
-				params: { terminalId: string; cols: number; rows: number };
-				response: AppState;
-			};
-			windowMinimize: { params: {}; response: { ok: boolean } };
-			windowMaximize: { params: {}; response: { ok: boolean } };
-			windowClose: { params: {}; response: { ok: boolean } };
+	proxy: {
+		request: {
+			getInitialState: () => Promise<AppState>;
+			createProject: (params: { name: string }) => Promise<AppState>;
+			renameProject: (params: {
+				projectId: string;
+				name: string;
+			}) => Promise<AppState>;
+			deleteProject: (params: { projectId: string }) => Promise<AppState>;
+			createTerminal: (params: {
+				projectId: string;
+				name: string;
+				cwd: string;
+				shell?: string;
+			}) => Promise<AppState>;
+			renameTerminal: (params: {
+				terminalId: string;
+				name: string;
+			}) => Promise<AppState>;
+			deleteTerminal: (params: { terminalId: string }) => Promise<AppState>;
+			activateTerminal: (params: {
+				terminalId: string;
+				cols: number;
+				rows: number;
+			}) => Promise<AppState>;
+			sendInput: (params: {
+				terminalId: string;
+				data: string;
+			}) => Promise<{ ok: boolean }>;
+			resizeTerminal: (params: {
+				terminalId: string;
+				cols: number;
+				rows: number;
+			}) => Promise<{ ok: boolean }>;
+			restartTerminal: (params: {
+				terminalId: string;
+				cols: number;
+				rows: number;
+			}) => Promise<AppState>;
+			windowMinimize: (params: Record<string, never>) => Promise<{ ok: boolean }>;
+			windowMaximize: (params: Record<string, never>) => Promise<{ ok: boolean }>;
+			windowClose: (params: Record<string, never>) => Promise<{ ok: boolean }>;
 		};
-		messages: {};
-	}>;
-	webview: RPCSchema<{
-		requests: {};
-		messages: {
-			stateChanged: AppState;
-			terminalOutput: TerminalOutputMessage;
-			terminalStarted: TerminalStartedMessage;
-			terminalExit: TerminalExitMessage;
-			terminalError: TerminalErrorMessage;
-			terminalDiagnosticNotice: TerminalDiagnosticNoticeMessage;
-		};
-	}>;
+	};
 };
+

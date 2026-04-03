@@ -1,6 +1,6 @@
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
-import { Electroview } from "electrobun/view";
+import { Electroview } from "./electroview";
 import "./style.css";
 import type {
 	AppState,
@@ -100,7 +100,7 @@ let state: AppState = {
 };
 
 let selection: Selection = null;
-let statusMessage = "Booting Terminal Window Manager ElectroBun proof of concept...";
+let statusMessage = "Booting Terminal Window Manager Tauri shell...";
 let layoutSyncScheduled = false;
 let editingProjectId: string | null = null;
 let editingProjectDraft = "";
@@ -129,9 +129,9 @@ function getRendererRpc() {
 
 app.innerHTML = `
 	<div class="app-shell">
-		<header class="titlebar electrobun-webkit-app-region-drag">
+		<header class="titlebar" data-tauri-drag-region>
 			<div class="titlebar-title">Terminal Window Manager</div>
-			<div class="titlebar-controls electrobun-webkit-app-region-no-drag">
+			<div class="titlebar-controls">
 				<button id="win-minimize" class="titlebar-button" type="button" title="Minimize">
 					<svg width="10" height="1" viewBox="0 0 10 1"><rect width="10" height="1" fill="currentColor"/></svg>
 				</button>
@@ -221,7 +221,7 @@ app.innerHTML = `
 							<span id="activity-updated" class="status-updated">No activity yet</span>
 						</div>
 						<div class="status-banner" id="status-banner">
-							Booting Terminal Window Manager ElectroBun proof of concept...
+							Booting Terminal Window Manager Tauri shell...
 						</div>
 					</div>
 				</div>
@@ -326,7 +326,7 @@ winMaximize.addEventListener("click", () => {
 });
 
 winClose.addEventListener("click", () => {
-	void getRendererRpc().proxy.request.windowClose({});
+    void getRendererRpc().proxy.request.windowClose({});
 });
 
 newProjectButton.addEventListener("click", () => {
@@ -1704,3 +1704,6 @@ function queryHtmlElement<TElement extends HTMLElement>(id: string): TElement {
 
 	return element as TElement;
 }
+
+
+

@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("All", "DotNet", "ElectroBun", "Desktop")]
+    [ValidateSet("All", "DotNet", "Tauri", "Desktop")]
     [string]$Target = "All",
 
     [ValidateSet("Debug", "Release")]
@@ -15,6 +15,8 @@ Set-StrictMode -Version Latest
 $repoRoot = Split-Path -Parent $PSCommandPath
 $frontendDir = Join-Path $repoRoot "src\TerminalWindowManager.ElectroBun"
 $conPtyHostProject = Join-Path $repoRoot "src\TerminalWindowManager.ConPTYHost\TerminalWindowManager.ConPTYHost.csproj"
+$conPtyHostReleaseDir = Join-Path $repoRoot "src\TerminalWindowManager.ConPTYHost\bin\Release\net10.0-windows"
+$tauriResourcesDir = Join-Path $frontendDir "src-tauri\resources\TerminalWindowManager.ConPTYHost"
 $dotNetProjects = @(
     Join-Path $repoRoot "src\TerminalWindowManager.Core\TerminalWindowManager.Core.csproj"
     Join-Path $repoRoot "src\TerminalWindowManager.Terminal\TerminalWindowManager.Terminal.csproj"
@@ -24,7 +26,7 @@ $dotNetProjects = @(
 
 function Assert-WindowsHost {
     if ($env:OS -ne "Windows_NT") {
-        throw "The active TerminalWindowManager projects target Windows-only components (WPF and ConPTY). Run this script on Windows."
+        throw "The active TerminalWindowManager projects target Windows-only components (WPF, ConPTY, and Tauri shell integration). Run this script on Windows."
     }
 }
 
@@ -105,7 +107,7 @@ function Build-DotNetProjects {
 
 function Ensure-FrontendDependencies {
     Assert-CommandAvailable -CommandName "bun" -InstallHint "Install Bun 1.x and make sure 'bun' is on PATH."
-    Assert-PathExists -Path $frontendDir -Description "ElectroBun project directory"
+    Assert-PathExists -Path $frontendDir -Description "Tauri frontend project directory"
 
     $nodeModulesDir = Join-Path $frontendDir "node_modules"
     if ($ForceFrontendInstall -or -not (Test-Path -Path $nodeModulesDir)) {
@@ -116,28 +118,35 @@ function Ensure-FrontendDependencies {
     Write-Host "==> Reusing existing frontend dependencies in src\TerminalWindowManager.ElectroBun\node_modules" -ForegroundColor DarkGray
 }
 
-function Build-ElectroBunView {
+function Build-ConPtyHelper {
     Assert-CommandAvailable -CommandName "dotnet" -InstallHint "Install the .NET 10 SDK and make sure 'dotnet' is on PATH."
-    Ensure-FrontendDependencies
+    Assert-PathExists -Path $conPtyHostProject -Description "ConPTY host project"
 
-    # The ElectroBun session manager resolves the helper from bin/Debug/net10.0-windows.
     Invoke-ExternalCommand `
         -FilePath "dotnet" `
         -ArgumentList @(
             "build",
             $conPtyHostProject,
-            "--configuration", "Debug",
+            "--configuration", "Release",
             "--nologo",
             "--verbosity", "minimal"
         )
 
+    Assert-PathExists -Path $conPtyHostReleaseDir -Description "ConPTY host output directory"
+    New-Item -ItemType Directory -Force -Path $tauriResourcesDir | Out-Null
+    Copy-Item -Path (Join-Path $conPtyHostReleaseDir "*") -Destination $tauriResourcesDir -Recurse -Force
+}
+
+function Build-TauriView {
+    Ensure-FrontendDependencies
+    Build-ConPtyHelper
     Invoke-ExternalCommand -FilePath "bun" -ArgumentList @("run", "build:view") -WorkingDirectory $frontendDir
 }
 
-function Build-ElectroBunDesktop {
-    Assert-CommandAvailable -CommandName "dotnet" -InstallHint "Install the .NET 10 SDK and make sure 'dotnet' is on PATH."
+function Build-TauriDesktop {
     Ensure-FrontendDependencies
-    Invoke-ExternalCommand -FilePath "bun" -ArgumentList @("run", "build:desktop") -WorkingDirectory $frontendDir
+    Build-ConPtyHelper
+    Invoke-ExternalCommand -FilePath "bun" -ArgumentList @("run", "tauri", "build") -WorkingDirectory $frontendDir
 }
 
 Assert-WindowsHost
@@ -145,19 +154,19 @@ Assert-WindowsHost
 switch ($Target) {
     "All" {
         Build-DotNetProjects -BuildConfiguration $Configuration
-        Build-ElectroBunView
+        Build-TauriView
     }
 
     "DotNet" {
         Build-DotNetProjects -BuildConfiguration $Configuration
     }
 
-    "ElectroBun" {
-        Build-ElectroBunView
+    "Tauri" {
+        Build-TauriView
     }
 
     "Desktop" {
-        Build-ElectroBunDesktop
+        Build-TauriDesktop
     }
 }
 
@@ -170,11 +179,12 @@ if ($Target -eq "All" -or $Target -eq "DotNet") {
     Write-Host "ConPTY host output: src\TerminalWindowManager.ConPTYHost\bin\$Configuration\net10.0-windows\"
 }
 
-if ($Target -eq "All" -or $Target -eq "ElectroBun") {
-    Write-Host "ElectroBun helper output: src\TerminalWindowManager.ConPTYHost\bin\Debug\net10.0-windows\"
-    Write-Host "ElectroBun web assets: src\TerminalWindowManager.ElectroBun\dist\"
+if ($Target -eq "All" -or $Target -eq "Tauri") {
+    Write-Host "Tauri helper resources: src\TerminalWindowManager.ElectroBun\src-tauri\resources\TerminalWindowManager.ConPTYHost\"
+    Write-Host "Tauri web assets: src\TerminalWindowManager.ElectroBun\dist\"
 }
 
 if ($Target -eq "Desktop") {
-    Write-Host "ElectroBun desktop package: src\TerminalWindowManager.ElectroBun\artifacts\stable-win-x64-*.zip"
+    Write-Host "Tauri desktop package: src\TerminalWindowManager.ElectroBun\src-tauri\target\release\bundle\"
 }
+

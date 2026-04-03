@@ -1,0 +1,31 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Terminal Window Manager",
+  "version": "0.0.0",
+  "identifier": "dev.projectwm.twm-tauri",
+  "build": {
+    "beforeDevCommand": "bun run hmr",
+    "devUrl": "http://localhost:5173",
+    "beforeBuildCommand": "bun run build:view",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Terminal Window Manager",
+        "width": 1480,
+        "height": 920,
+        "minWidth": 1080,
+        "minHeight": 680,
+        "decorations": false,
+        "center": true
+      }
+    ]
+  },
+  "bundle": {
+    "active": true,
+    "icon": ["icons/icon.ico", "icons/app-icon.svg"],
+    "resources": ["resources/"]
+  }
+}
+
