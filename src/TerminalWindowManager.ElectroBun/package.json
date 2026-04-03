@@ -1,6 +1,6 @@
 {
 	"name": "terminal-window-manager-electrobun",
-	"version": "0.0.0",
+	"version": "0.0.1",
 	"type": "module",
 	"description": "ElectroBun + xterm.js + ConPTY proof of concept for project-based terminal switching.",
 	"scripts": {

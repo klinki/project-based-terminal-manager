@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.1](https://github.com/klinki/project-based-terminal-manager/compare/v0.0.0...v0.0.1) (2026-04-03)
+
+
+### Bug Fixes
+
+* Bump version, fix release process ([06ce584](https://github.com/klinki/project-based-terminal-manager/commit/06ce5840cb49024d410dfbc36016374b2a0247d6))
+
 ## 0.0.0 (2026-04-02)
 
 
