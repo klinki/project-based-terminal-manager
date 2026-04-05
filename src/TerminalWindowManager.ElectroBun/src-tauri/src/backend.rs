@@ -10,7 +10,7 @@ use std::time::Duration;
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tauri::{AppHandle, Emitter};
+use tauri::{path::BaseDirectory, AppHandle, Emitter, Manager};
 
 use crate::diagnostics::{
     append_output_chunk,
@@ -89,7 +89,7 @@ impl SessionManager {
             .map(Path::to_path_buf)
             .ok_or_else(|| "Unable to resolve the Tauri app data directory.".to_string())?;
 
-        let helper_candidates = Self::create_helper_path_candidates();
+        let helper_candidates = Self::create_helper_path_candidates(&app_handle);
         let helper_path = helper_candidates
             .iter()
             .find(|candidate| candidate.exists())
@@ -349,6 +349,29 @@ impl SessionManager {
         Ok(self.snapshot_state())
     }
 
+    pub fn update_defaults(
+        &self,
+        default_cwd: String,
+        default_shell: String,
+    ) -> Result<AppState, String> {
+        {
+            let mut state = self.state.lock().map_err(|error| error.to_string())?;
+            let trimmed_cwd = default_cwd.trim();
+            let trimmed_shell = default_shell.trim();
+
+            if !trimmed_cwd.is_empty() {
+                state.defaults.default_cwd = trimmed_cwd.to_string();
+            }
+
+            if !trimmed_shell.is_empty() {
+                state.defaults.default_shell = trimmed_shell.to_string();
+            }
+        }
+
+        self.persist_and_emit_state()?;
+        Ok(self.snapshot_state())
+    }
+
     pub fn stop_terminal(&self, terminal_id: String) -> Result<(), String> {
         let session = {
             let sessions = self.sessions.lock().map_err(|error| error.to_string())?;
@@ -447,8 +470,17 @@ impl SessionManager {
             self.emit_state_changed_snapshot(state.clone());
         }
 
-        self.spawn_session(terminal_snapshot, cols, rows)?;
-        Ok(())
+        match self.spawn_session(terminal_snapshot.clone(), cols, rows) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                self.record_launch_failure(
+                    &terminal_snapshot.terminal,
+                    &terminal_snapshot.session_id,
+                    error.clone(),
+                )?;
+                Err(error)
+            }
+        }
     }
     fn spawn_session(&self, context: TerminalLaunchContext, cols: u32, rows: u32) -> Result<(), String> {
         if !self.helper_path.exists() {
@@ -1079,19 +1111,169 @@ impl SessionManager {
             .unwrap_or_else(|_| AppState::create_initial())
     }
 
-    fn create_helper_path_candidates() -> Vec<PathBuf> {
+    fn create_helper_path_candidates(app_handle: &AppHandle) -> Vec<PathBuf> {
         let mut candidates = Vec::new();
+        let mut push_candidate = |candidate: PathBuf| {
+            if !candidates.iter().any(|existing| existing == &candidate) {
+                candidates.push(candidate);
+            }
+        };
+
+        if let Ok(resource_candidate) = app_handle.path().resolve(
+            "TerminalWindowManager.ConPTYHost/TerminalWindowManager.ConPTYHost.exe",
+            BaseDirectory::Resource,
+        ) {
+            push_candidate(resource_candidate);
+        }
+
+        if let Ok(resource_dir) = app_handle.path().resource_dir() {
+            push_candidate(
+                resource_dir
+                    .join("TerminalWindowManager.ConPTYHost")
+                    .join("TerminalWindowManager.ConPTYHost.exe"),
+            );
+        }
+
+        if let Ok(executable_dir) = app_handle.path().executable_dir() {
+            push_candidate(
+                executable_dir
+                    .join("resources")
+                    .join("TerminalWindowManager.ConPTYHost")
+                    .join("TerminalWindowManager.ConPTYHost.exe"),
+            );
+            push_candidate(
+                executable_dir
+                    .join("Resources")
+                    .join("TerminalWindowManager.ConPTYHost")
+                    .join("TerminalWindowManager.ConPTYHost.exe"),
+            );
+        }
+
         if let Ok(current_dir) = std::env::current_dir() {
-            candidates.push(current_dir.join("src-tauri/resources/TerminalWindowManager.ConPTYHost/TerminalWindowManager.ConPTYHost.exe"));
-            candidates.push(current_dir.join("src/TerminalWindowManager.ConPTYHost/bin/Release/net10.0-windows/TerminalWindowManager.ConPTYHost.exe"));
-            candidates.push(current_dir.join("src/TerminalWindowManager.ConPTYHost/bin/Debug/net10.0-windows/TerminalWindowManager.ConPTYHost.exe"));
+            push_candidate(
+                current_dir
+                    .join("resources")
+                    .join("TerminalWindowManager.ConPTYHost")
+                    .join("TerminalWindowManager.ConPTYHost.exe"),
+            );
+            push_candidate(
+                current_dir
+                    .join("Resources")
+                    .join("TerminalWindowManager.ConPTYHost")
+                    .join("TerminalWindowManager.ConPTYHost.exe"),
+            );
+            push_candidate(
+                current_dir
+                    .join("src-tauri")
+                    .join("resources")
+                    .join("TerminalWindowManager.ConPTYHost")
+                    .join("TerminalWindowManager.ConPTYHost.exe"),
+            );
+            push_candidate(
+                current_dir
+                    .join("src")
+                    .join("TerminalWindowManager.ElectroBun")
+                    .join("src-tauri")
+                    .join("resources")
+                    .join("TerminalWindowManager.ConPTYHost")
+                    .join("TerminalWindowManager.ConPTYHost.exe"),
+            );
+            push_candidate(
+                current_dir
+                    .join("src")
+                    .join("TerminalWindowManager.ConPTYHost")
+                    .join("bin")
+                    .join("Release")
+                    .join("net10.0-windows")
+                    .join("TerminalWindowManager.ConPTYHost.exe"),
+            );
+            push_candidate(
+                current_dir
+                    .join("src")
+                    .join("TerminalWindowManager.ConPTYHost")
+                    .join("bin")
+                    .join("Debug")
+                    .join("net10.0-windows")
+                    .join("TerminalWindowManager.ConPTYHost.exe"),
+            );
             if let Some(parent) = current_dir.parent() {
-                candidates.push(parent.join("TerminalWindowManager.ConPTYHost/bin/Release/net10.0-windows/TerminalWindowManager.ConPTYHost.exe"));
-                candidates.push(parent.join("TerminalWindowManager.ConPTYHost/bin/Debug/net10.0-windows/TerminalWindowManager.ConPTYHost.exe"));
+                push_candidate(
+                    parent
+                        .join("resources")
+                        .join("TerminalWindowManager.ConPTYHost")
+                        .join("TerminalWindowManager.ConPTYHost.exe"),
+                );
+                push_candidate(
+                    parent
+                        .join("TerminalWindowManager.ConPTYHost")
+                        .join("bin")
+                        .join("Release")
+                        .join("net10.0-windows")
+                        .join("TerminalWindowManager.ConPTYHost.exe"),
+                );
+                push_candidate(
+                    parent
+                        .join("TerminalWindowManager.ConPTYHost")
+                        .join("bin")
+                        .join("Debug")
+                        .join("net10.0-windows")
+                        .join("TerminalWindowManager.ConPTYHost.exe"),
+                );
             }
         }
 
         candidates
+    }
+
+    fn record_launch_failure(
+        &self,
+        terminal: &TerminalRecord,
+        session_id: &str,
+        message: String,
+    ) -> Result<(), String> {
+        {
+            let mut state = self.state.lock().map_err(|error| error.to_string())?;
+            if let Some(record) = state.terminals.iter_mut().find(|candidate| candidate.id == terminal.id) {
+                record.status = TerminalStatus::Error;
+                record.last_session_failure = Some(TerminalSessionFailure {
+                    session_id: session_id.to_string(),
+                    timestamp: now_iso_string(),
+                    exit_code: None,
+                    message: message.clone(),
+                    shell_path: terminal.shell.clone(),
+                    shell_pid: None,
+                    stderr_excerpt: None,
+                    recent_output_excerpt: String::new(),
+                    exception_type: Some("HelperLaunchFailure".to_string()),
+                    hresult: None,
+                    win32_error_code: None,
+                });
+                record.activity = TerminalActivity {
+                    phase: TerminalActivityPhase::Attention,
+                    summary: "Session error".to_string(),
+                    detail: message.clone(),
+                    progress: 100,
+                    is_indeterminate: false,
+                    updated_at: now_iso_string(),
+                };
+            }
+        }
+
+        self.persist_and_emit_state()?;
+        self.emit_event(
+            "terminal-error",
+            serde_json::json!({
+                "terminalId": terminal.id,
+                "sessionId": session_id,
+                "message": message,
+                "diagnosticLogPath": terminal.diagnostic_log_path,
+                "exceptionType": "HelperLaunchFailure",
+                "hresult": null,
+                "win32ErrorCode": null,
+                "recentOutputExcerpt": "",
+            }),
+        );
+        Ok(())
     }
 
     fn find_project<'a>(state: &'a AppState, project_id: &str) -> Result<&'a ProjectRecord, String> {

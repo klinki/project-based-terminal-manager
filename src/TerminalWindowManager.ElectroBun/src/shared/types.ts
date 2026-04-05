@@ -154,6 +154,10 @@ export type TerminalManagerRpc = {
 				cols: number;
 				rows: number;
 			}) => Promise<AppState>;
+			updateDefaults: (params: {
+				defaultCwd: string;
+				defaultShell: string;
+			}) => Promise<AppState>;
 			windowMinimize: (params: Record<string, never>) => Promise<{ ok: boolean }>;
 			windowMaximize: (params: Record<string, never>) => Promise<{ ok: boolean }>;
 			windowClose: (params: Record<string, never>) => Promise<{ ok: boolean }>;

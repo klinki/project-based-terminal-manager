@@ -1,5 +1,6 @@
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Electroview } from "./electroview";
 import "./style.css";
 import type {
@@ -71,7 +72,7 @@ const rpc = Electroview.defineRPC<TerminalManagerRpc>({
 	},
 });
 
-const electroview = new Electroview({ rpc });
+const electroview = new Electroview(rpc);
 const app = document.getElementById("app");
 if (!app) {
 	throw new Error("The root app container was not found.");
@@ -114,6 +115,9 @@ let inspectorCollapsed = false;
 let contextMenuState: { kind: "project" | "terminal"; id: string } | null = null;
 let pendingConfirmResolve: ((confirmed: boolean) => void) | null = null;
 let pendingRenameResolve: ((value: string | null) => void) | null = null;
+let pendingSettingsResolve:
+	| ((value: { defaultCwd: string; defaultShell: string } | null) => void)
+	| null = null;
 
 const terminalViews = new Map<string, TerminalView>();
 const utf8Decoder = new TextDecoder();
@@ -129,7 +133,7 @@ function getRendererRpc() {
 
 app.innerHTML = `
 	<div class="app-shell">
-		<header class="titlebar" data-tauri-drag-region>
+		<header id="titlebar" class="titlebar" data-tauri-drag-region>
 			<div class="titlebar-title">Terminal Window Manager</div>
 			<div class="titlebar-controls">
 				<button id="win-minimize" class="titlebar-button" type="button" title="Minimize">
@@ -175,7 +179,7 @@ app.innerHTML = `
 			</div>
 
 			<div class="sidebar-bottom">
-				<button class="nav-item nav-item-footer" type="button">
+				<button id="settings-button" class="nav-item nav-item-footer" type="button">
 					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 						<circle cx="12" cy="12" r="3"></circle>
 						<path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
@@ -258,11 +262,30 @@ app.innerHTML = `
 				</div>
 			</form>
 		</dialog>
+		<dialog id="settings-dialog" class="confirm-dialog">
+			<form method="dialog" class="confirm-dialog-panel">
+				<h3 class="confirm-dialog-title">Settings</h3>
+				<p class="confirm-dialog-message">Set the default working directory and shell used for new consoles.</p>
+				<label class="settings-field">
+					<span class="settings-label">Default working directory</span>
+					<input id="settings-dialog-default-cwd" class="dialog-input" type="text" />
+				</label>
+				<label class="settings-field">
+					<span class="settings-label">Default shell</span>
+					<input id="settings-dialog-default-shell" class="dialog-input" type="text" />
+				</label>
+				<div class="confirm-dialog-actions">
+					<button class="secondary-button" value="cancel">Cancel</button>
+					<button id="settings-dialog-save" class="primary-button" value="confirm">Save</button>
+				</div>
+			</form>
+		</dialog>
 	</div>
 `;
 
 const projectTreeElement = queryHtmlElement<HTMLUListElement>("project-tree");
 const projectCount = queryHtmlElement<HTMLElement>("project-count");
+const titlebar = queryHtmlElement<HTMLElement>("titlebar");
 const newProjectButton =
 	queryHtmlElement<HTMLButtonElement>("new-project-button");
 const newConsoleButton =
@@ -302,6 +325,14 @@ const renameDialogMessage =
 	queryHtmlElement<HTMLParagraphElement>("rename-dialog-message");
 const renameDialogInput =
 	queryHtmlElement<HTMLInputElement>("rename-dialog-input");
+const settingsButton =
+	queryHtmlElement<HTMLButtonElement>("settings-button");
+const settingsDialog =
+	queryHtmlElement<HTMLDialogElement>("settings-dialog");
+const settingsDialogInputCwd =
+	queryHtmlElement<HTMLInputElement>("settings-dialog-default-cwd");
+const settingsDialogInputShell =
+	queryHtmlElement<HTMLInputElement>("settings-dialog-default-shell");
 const winMinimize = queryHtmlElement<HTMLButtonElement>("win-minimize");
 const winMaximize = queryHtmlElement<HTMLButtonElement>("win-maximize");
 const winClose = queryHtmlElement<HTMLButtonElement>("win-close");
@@ -311,30 +342,63 @@ const terminalStageResizeObserver = new ResizeObserver(() => {
 });
 terminalStageResizeObserver.observe(terminalStage);
 
+titlebar.addEventListener("pointerdown", (event) => {
+	if (event.button !== 0) {
+		return;
+	}
+
+	const target = event.target as HTMLElement;
+	if (target.closest(".titlebar-controls") || target.closest("button")) {
+		return;
+	}
+
+	event.preventDefault();
+	void getCurrentWindow().startDragging();
+});
+
+titlebar.addEventListener("dblclick", (event) => {
+	const target = event.target as HTMLElement;
+	if (target.closest(".titlebar-controls") || target.closest("button")) {
+		return;
+	}
+
+	void getCurrentWindow().toggleMaximize();
+});
+
 inspectorToggle.addEventListener("click", () => {
 	inspectorCollapsed = !inspectorCollapsed;
 	inspectorPanel.classList.toggle("collapsed", inspectorCollapsed);
 	scheduleSelectedTerminalLayoutSync();
 });
 
+settingsButton.addEventListener("click", () => {
+	void runUiAction("Settings", openSettingsDialog);
+});
+
 winMinimize.addEventListener("click", () => {
-	void getRendererRpc().proxy.request.windowMinimize({});
+	void runUiAction("Minimize window", async () => {
+		await getCurrentWindow().minimize();
+	});
 });
 
 winMaximize.addEventListener("click", () => {
-	void getRendererRpc().proxy.request.windowMaximize({});
+	void runUiAction("Toggle maximize", async () => {
+		await getCurrentWindow().toggleMaximize();
+	});
 });
 
 winClose.addEventListener("click", () => {
-    void getRendererRpc().proxy.request.windowClose({});
+	void runUiAction("Close window", async () => {
+		await getCurrentWindow().close();
+	});
 });
 
 newProjectButton.addEventListener("click", () => {
-	void createProjectAndBeginRename();
+	void runUiAction("Create project", createProjectAndBeginRename);
 });
 
 newConsoleButton.addEventListener("click", () => {
-	void createConsoleFromSelection();
+	void runUiAction("Create console", createConsoleFromSelection);
 });
 
 projectTreeElement.addEventListener("click", (event) => {
@@ -349,13 +413,17 @@ projectTreeElement.addEventListener("click", (event) => {
 	const projectConsoleButton =
 		target.closest<HTMLButtonElement>("[data-project-new-console-id]");
 	if (projectConsoleButton) {
-		void createConsoleFromProject(projectConsoleButton.dataset.projectNewConsoleId!);
+		void runUiAction("Create console", () =>
+			createConsoleFromProject(projectConsoleButton.dataset.projectNewConsoleId!),
+		);
 		return;
 	}
 
 	const terminalButton = target.closest<HTMLButtonElement>("[data-terminal-id]");
 	if (terminalButton) {
-		void selectTerminal(terminalButton.dataset.terminalId!);
+		void runUiAction("Open console", () =>
+			selectTerminal(terminalButton.dataset.terminalId!),
+		);
 		return;
 	}
 
@@ -566,11 +634,33 @@ renameDialog.addEventListener("close", () => {
 	);
 });
 
-bootstrap().catch((error: unknown) => {
-	const message = error instanceof Error ? error.message : String(error);
-	setStatus(`Startup failed: ${message}`);
-	throw error;
+settingsDialog.addEventListener("close", () => {
+	const resolver = pendingSettingsResolve;
+	pendingSettingsResolve = null;
+	if (!resolver) {
+		return;
+	}
+
+	resolver(
+		settingsDialog.returnValue === "confirm"
+			? {
+					defaultCwd: settingsDialogInputCwd.value.trim(),
+					defaultShell: settingsDialogInputShell.value.trim(),
+				}
+			: null,
+	);
 });
+
+void (async () => {
+	try {
+		await Electroview.ready;
+		await bootstrap();
+	} catch (error: unknown) {
+		const message = error instanceof Error ? error.message : String(error);
+		setStatus(`Startup failed: ${message}`);
+		throw error;
+	}
+})();
 
 async function bootstrap(): Promise<void> {
 	state = await getRendererRpc().proxy.request.getInitialState({});
@@ -856,6 +946,40 @@ function showRenameDialog(options: {
 	});
 }
 
+function showSettingsDialog(options: {
+	defaultCwd: string;
+	defaultShell: string;
+}): Promise<{ defaultCwd: string; defaultShell: string } | null> {
+	if (pendingSettingsResolve) {
+		pendingSettingsResolve(null);
+		pendingSettingsResolve = null;
+	}
+
+	settingsDialogInputCwd.value = options.defaultCwd;
+	settingsDialogInputShell.value = options.defaultShell;
+	settingsDialog.returnValue = "cancel";
+	settingsDialog.showModal();
+	requestAnimationFrame(() => {
+		settingsDialogInputCwd.focus();
+		settingsDialogInputCwd.select();
+	});
+	return new Promise<{ defaultCwd: string; defaultShell: string } | null>(
+		(resolve) => {
+			pendingSettingsResolve = resolve;
+		},
+	);
+}
+
+async function runUiAction(actionName: string, action: () => Promise<void>): Promise<void> {
+	try {
+		await action();
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		console.error(`${actionName} failed`, error);
+		setStatus(`${actionName} failed: ${message}`);
+	}
+}
+
 async function createProjectAndBeginRename(): Promise<void> {
 	const placeholderName = getNextProjectPlaceholderName();
 	state = await getRendererRpc().proxy.request.createProject({
@@ -1052,8 +1176,25 @@ async function createConsoleFromProject(projectId: string): Promise<void> {
 		throw new Error("The newly created console could not be resolved.");
 	}
 
-	startEditingTerminal(terminal.id, terminal.name, { activateOnCommit: true });
-	setStatus(`Created '${terminal.name}' in '${project.name}'. Type a console name and press Enter to launch it.`);
+	await selectTerminal(terminal.id);
+	setStatus(`Created '${terminal.name}' in '${project.name}'. The console is ready for input.`);
+}
+
+async function openSettingsDialog(): Promise<void> {
+	const settings = await showSettingsDialog({
+		defaultCwd: state.defaults.defaultCwd,
+		defaultShell: state.defaults.defaultShell,
+	});
+
+	if (!settings) {
+		return;
+	}
+
+	state = await getRendererRpc().proxy.request.updateDefaults(settings);
+	renderTree();
+	renderInspector();
+	renderStatusBoard();
+	setStatus("Updated default console settings.");
 }
 
 async function selectTerminal(terminalId: string): Promise<void> {

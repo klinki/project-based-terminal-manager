@@ -26,6 +26,8 @@ type RPCDefinition = {
 	};
 };
 
+let messageHandlersReady: Promise<void> = Promise.resolve();
+
 function createRpcBridge(): TerminalManagerRpc {
 	return {
 		proxy: {
@@ -53,6 +55,8 @@ function createRpcBridge(): TerminalManagerRpc {
 					invoke<{ ok: boolean }>("resize_terminal", { terminalId, cols, rows }),
 				restartTerminal: ({ terminalId, cols, rows }) =>
 					invoke<AppState>("restart_terminal", { terminalId, cols, rows }),
+				updateDefaults: ({ defaultCwd, defaultShell }) =>
+					invoke<AppState>("update_defaults", { defaultCwd, defaultShell }),
 				windowMinimize: () => invoke<{ ok: boolean }>("window_minimize"),
 				windowMaximize: () => invoke<{ ok: boolean }>("window_maximize"),
 				windowClose: () => invoke<{ ok: boolean }>("window_close"),
@@ -63,30 +67,39 @@ function createRpcBridge(): TerminalManagerRpc {
 }
 
 async function registerMessageHandlers(messages: MessageHandlers): Promise<void> {
-	void listen<AppState>("state-changed", (event) => {
-		messages.stateChanged(event.payload);
-	});
-	void listen<TerminalOutputMessage>("terminal-output", (event) => {
-		messages.terminalOutput(event.payload);
-	});
-	void listen<TerminalStartedMessage>("terminal-started", (event) => {
-		messages.terminalStarted(event.payload);
-	});
-	void listen<TerminalExitMessage>("terminal-exit", (event) => {
-		messages.terminalExit(event.payload);
-	});
-	void listen<TerminalErrorMessage>("terminal-error", (event) => {
-		messages.terminalError(event.payload);
-	});
-	void listen<TerminalDiagnosticNoticeMessage>("terminal-diagnostic-notice", (event) => {
-		messages.terminalDiagnosticNotice(event.payload);
-	});
+	await Promise.all([
+		listen<AppState>("state-changed", (event) => {
+			messages.stateChanged(event.payload);
+		}),
+		listen<TerminalOutputMessage>("terminal-output", (event) => {
+			messages.terminalOutput(event.payload);
+		}),
+		listen<TerminalStartedMessage>("terminal-started", (event) => {
+			messages.terminalStarted(event.payload);
+		}),
+		listen<TerminalExitMessage>("terminal-exit", (event) => {
+			messages.terminalExit(event.payload);
+		}),
+		listen<TerminalErrorMessage>("terminal-error", (event) => {
+			messages.terminalError(event.payload);
+		}),
+		listen<TerminalDiagnosticNoticeMessage>("terminal-diagnostic-notice", (event) => {
+			messages.terminalDiagnosticNotice(event.payload);
+		}),
+	]);
 }
 
 export class Electroview {
 	public static defineRPC<T>(definition: RPCDefinition): T {
-		void registerMessageHandlers(definition.handlers.messages);
+		messageHandlersReady = registerMessageHandlers(definition.handlers.messages).catch((error) => {
+			console.error("Failed to register Tauri event listeners", error);
+			throw error;
+		});
 		return createRpcBridge() as T;
+	}
+
+	public static get ready(): Promise<void> {
+		return messageHandlersReady;
 	}
 
 	public constructor(public readonly rpc: TerminalManagerRpc) {}

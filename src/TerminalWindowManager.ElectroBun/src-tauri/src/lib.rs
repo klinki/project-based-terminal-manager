@@ -99,6 +99,15 @@ fn restart_terminal(
 }
 
 #[tauri::command]
+fn update_defaults(
+    manager: State<'_, SessionManager>,
+    default_cwd: String,
+    default_shell: String,
+) -> Result<models::AppState, String> {
+    manager.update_defaults(default_cwd, default_shell)
+}
+
+#[tauri::command]
 fn window_minimize(window: WebviewWindow) -> Result<serde_json::Value, String> {
     window.minimize().map_err(|error| error.to_string())?;
     Ok(serde_json::json!({ "ok": true }))
@@ -157,6 +166,7 @@ pub fn run() {
             send_input,
             resize_terminal,
             restart_terminal,
+            update_defaults,
             window_minimize,
             window_maximize,
             stop_all_sessions,
