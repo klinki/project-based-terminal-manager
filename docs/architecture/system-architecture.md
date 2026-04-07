@@ -1,415 +1,520 @@
 # System Architecture
 
-## Overview
+## Purpose
 
-Terminal Window Manager currently contains two desktop architectures in the same repository:
+This document compares two viable web-native desktop shell architectures for Terminal Window Manager:
 
-- A WPF-based Windows application that launches and hosts external Windows Terminal windows.
-- A Tauri-based desktop application that renders its own terminal UI with `xterm.js` and drives shell sessions through a dedicated ConPTY helper process.
+- The current branch architecture, which uses Tauri as the desktop runtime and Rust as the native backend.
+- The `main` branch architecture, which uses ElectroBun as the desktop runtime and Bun as the host-side backend.
 
-The project folder [src/TerminalWindowManager.ElectroBun](../../src/TerminalWindowManager.ElectroBun) still carries the historical `ElectroBun` name, but the active desktop shell inside that folder is now Tauri-based. The old name remains in folder names and a few compatibility-oriented abstractions such as `Electroview`, but the current implementation uses Tauri, Rust, TypeScript, and `xterm.js`.
+Both alternatives share the same product goal:
 
-The result is a mixed architecture:
+- Present a project-oriented terminal manager UI.
+- Render terminal content inside the application with `xterm.js`.
+- Drive real shell sessions through the native [TerminalWindowManager.ConPTYHost](../../src/TerminalWindowManager.ConPTYHost) process.
 
-- The WPF path is oriented around controlling and embedding an external terminal application.
-- The Tauri path is oriented around owning the terminal session lifecycle directly.
+The older WPF path in [TerminalWindowManager.App](../../src/TerminalWindowManager.App), [TerminalWindowManager.Core](../../src/TerminalWindowManager.Core), and [TerminalWindowManager.Terminal](../../src/TerminalWindowManager.Terminal) still exists in the repository, but it is not the main subject of this comparison. It is best understood as an earlier Windows-native product line rather than one of the two web-native shell alternatives.
 
-Those two paths share the repository, but they do not currently share one common runtime backend.
+## System Context
 
-## Project Roles
+At a high level, both alternatives follow the same product shape:
 
-### [TerminalWindowManager.Core](../../src/TerminalWindowManager.Core)
+- A TypeScript renderer owns the visible terminal manager UI.
+- A desktop host layer owns application lifecycle, persistence, window integration, and session orchestration.
+- The C# ConPTY helper owns pseudoconsole creation and shell process I/O.
 
-Role:
+```mermaid
+flowchart LR
+    User["User"] --> UI["TypeScript Renderer\nProjects, status, xterm.js"]
 
-- Shared C# domain model and services for the original WPF architecture.
+    UI --> ElectroBunHost["Alternative A: ElectroBun + Bun host\nmain branch"]
+    UI --> TauriHost["Alternative B: Tauri + Rust backend\ncurrent branch"]
 
-What it contains:
+    ElectroBunHost --> ConPTY["ConPTY helper\nTerminalWindowManager.ConPTYHost"]
+    TauriHost --> ConPTY
+    ConPTY --> Shell["cmd.exe / pwsh.exe / other shell"]
+```
 
-- Project and terminal models such as `TerminalProject` and `ManagedTerminalTab`.
-- `ObservableObject` infrastructure for data binding.
-- `ProjectCatalogService` for persistence to `%LOCALAPPDATA%\TerminalWindowManager\projects.json`.
-- The `IWindowsTerminalService` abstraction used by the WPF app.
+The main architectural difference is therefore not the renderer or the shell helper. The difference is the host layer in the middle:
 
-Why it exists:
+- On `main`, the host layer is implemented in Bun and runs inside the ElectroBun runtime.
+- On the current branch, the host layer is implemented in Rust and runs inside the Tauri runtime.
 
-- It isolates UI-independent state and persistence from the WPF shell.
-- It gives the WPF app a small service boundary instead of hard-coding Win32 interop everywhere.
-
-### [TerminalWindowManager.Terminal](../../src/TerminalWindowManager.Terminal)
-
-Role:
-
-- Windows Terminal integration layer for the WPF application.
-
-What it contains:
-
-- `WindowsTerminalService`, which launches `wt.exe`.
-- Win32 interop for finding top-level Windows Terminal windows.
-- `SetParent`-based window hosting and layout updates.
-
-Why it exists:
-
-- The original product concept was not to implement a terminal emulator, but to organize and host Windows Terminal windows inside a manager UI.
-- This project encapsulates the fragile Windows-specific window-hosting logic away from the WPF shell.
-
-### [TerminalWindowManager.App](../../src/TerminalWindowManager.App)
-
-Role:
-
-- The original desktop shell implemented in WPF.
-
-What it contains:
-
-- `MainViewModel` for project and terminal management.
-- `TerminalWindowHost`, an `HwndHost` used to embed hosted terminal windows.
-- XAML views and WPF command wiring.
-
-Why it exists:
-
-- WPF is well-suited to native Windows desktop UI, data binding, and `HwndHost` interop.
-- This path depends on Windows-native hosting because its terminal content is owned by an external process.
-
-### [TerminalWindowManager.ConPTYHost](../../src/TerminalWindowManager.ConPTYHost)
-
-Role:
-
-- Dedicated helper process that owns a ConPTY pseudoconsole session.
-
-What it contains:
-
-- `ConPtySession` for Win32 pseudoconsole setup.
-- A JSON line protocol over stdin/stdout.
-- Shell startup, resize, input, shutdown, and output event handling.
-
-Why it exists:
-
-- The Tauri app needs a native process boundary between the desktop shell and the terminal session.
-- ConPTY is Windows-specific and stateful; isolating it in a helper process reduces coupling to the desktop host and makes failures easier to diagnose.
-- The helper can be reused across different desktop shells as long as they speak the same protocol.
+## Involved Projects
 
 ### [TerminalWindowManager.ElectroBun](../../src/TerminalWindowManager.ElectroBun)
 
 Role:
 
-- Current cross-technology desktop shell project.
+- The desktop shell project for both alternatives, even though the implementation differs by branch.
 
-What it contains now:
+On `main`:
 
-- A TypeScript renderer in [src/mainview](../../src/TerminalWindowManager.ElectroBun/src/mainview).
-- Shared frontend/backend TypeScript contracts in [src/shared](../../src/TerminalWindowManager.ElectroBun/src/shared).
-- A Rust Tauri backend in [src-tauri](../../src/TerminalWindowManager.ElectroBun/src-tauri).
-- Tauri config, capabilities, and packaging.
+- It contains the TypeScript renderer.
+- It contains a Bun-side host layer that manages state, persistence, sessions, and ElectroBun RPC.
+- It packages the app with ElectroBun.
 
-What it contains historically:
+On the current branch:
 
-- Legacy ElectroBun naming and configuration in [electrobun.config.ts](../../src/TerminalWindowManager.ElectroBun/electrobun.config.ts).
-- Build artifacts and naming that indicate the folder was originally built around ElectroBun before the migration to Tauri.
+- It still contains the TypeScript renderer.
+- It now contains a Rust backend in [src-tauri](../../src/TerminalWindowManager.ElectroBun/src-tauri).
+- It packages the app with Tauri.
+
+Why it matters:
+
+- This is the architectural pivot point of the repository.
+- The product surface is similar in both branches, but the native desktop integration model is different.
+
+### [TerminalWindowManager.ConPTYHost](../../src/TerminalWindowManager.ConPTYHost)
+
+Role:
+
+- Shared native helper that owns the Windows ConPTY pseudoconsole session.
+
+What it does:
+
+- Launches the requested shell.
+- Connects stdin and stdout to the app host.
+- Handles resize, input, shutdown, and startup sequencing.
+- Emits structured session lifecycle information and diagnostics.
 
 Why it exists:
 
-- It is the modern shell path that replaces Windows Terminal hosting with an application-owned terminal experience.
-- It separates the terminal UI from the shell process, while keeping a web-based renderer and native desktop shell.
+- Both alternatives need a Windows-specific terminal execution boundary.
+- ConPTY is stateful and native; isolating it in a dedicated process keeps the desktop shell simpler.
 
-## Runtime Architecture
+### [TerminalWindowManager.App](../../src/TerminalWindowManager.App)
 
-### High-Level Context
+Role:
 
-```mermaid
-flowchart LR
-    User["User"] --> WPF["WPF App\nTerminalWindowManager.App"]
-    User --> Tauri["Tauri App\nTerminalWindowManager.ElectroBun"]
+- Original WPF shell for the earlier Windows Terminal hosting architecture.
 
-    WPF --> Core["Core Models + Catalog\nTerminalWindowManager.Core"]
-    WPF --> WT["Windows Terminal\nwt.exe"]
-    WPF --> TerminalSvc["WindowsTerminalService\nWin32 hosting"]
+Why it still matters:
 
-    Tauri --> WebUI["TypeScript Renderer\nxterm.js"]
-    Tauri --> Rust["Rust Backend\nSessionManager"]
-    Rust --> Host["ConPTY Helper\nTerminalWindowManager.ConPTYHost"]
-    Host --> Shell["cmd.exe / PowerShell / other shell"]
-```
+- It shows the product's original direction.
+- It is useful historical context when comparing "embed another terminal app" versus "own the terminal UI directly".
+- It is not the primary shell in either of the two alternatives compared here.
 
-This repository therefore supports two fundamentally different terminal ownership models:
+### [TerminalWindowManager.Core](../../src/TerminalWindowManager.Core)
 
-- WPF owns the manager UI, but not the terminal process or rendering surface.
-- Tauri owns the manager UI, the terminal renderer, and the session lifecycle, but delegates pseudoconsole handling to the helper process.
+Role:
 
-### WPF Path
+- Shared C# model and service layer for the WPF architecture.
 
-```mermaid
-flowchart TD
-    A["WPF UI\nMainWindow / MainViewModel"] --> B["ProjectCatalogService\nload/save projects"]
-    A --> C["WindowsTerminalService"]
-    C --> D["Launch wt.exe"]
-    C --> E["Find terminal HWND"]
-    E --> F["HwndHost\nTerminalWindowHost"]
-    F --> G["SetParent + layout updates"]
-```
+Why it still matters:
 
-Summary:
+- It contains the earlier domain concepts for projects and managed terminals.
+- It is an important reminder that the repository currently contains more than one architectural lineage.
 
-- Projects and terminal definitions are managed in C#.
-- When a terminal is activated, the app launches or locates a Windows Terminal window.
-- The external window is reparented into the WPF shell.
+### [TerminalWindowManager.Terminal](../../src/TerminalWindowManager.Terminal)
 
-Architectural implication:
+Role:
 
-- This design is pragmatic for Windows-native integration, but fragile because it depends on hosting a foreign top-level window that the application does not truly own.
+- Windows Terminal integration layer for the WPF product line.
 
-### Tauri Path
+Why it still matters:
+
+- It is the old answer to terminal execution and hosting.
+- It is structurally separate from both the ElectroBun and Tauri alternatives, which instead use `xterm.js` plus `ConPTYHost`.
+
+## Alternative A: ElectroBun Architecture On `main`
+
+The `main` branch ElectroBun architecture is a mostly JavaScript and TypeScript desktop stack:
+
+- TypeScript renderer for the UI.
+- Bun host-side runtime for state, persistence, and session orchestration.
+- ElectroBun windowing and RPC for the desktop shell.
+- C# ConPTY helper for native pseudoconsole handling.
+
+### Runtime Shape
 
 ```mermaid
 flowchart TD
-    A["TypeScript Renderer\nmain.ts"] --> B["Tauri invoke/listen bridge\nElectroview"]
-    B --> C["Rust SessionManager\nbackend.rs"]
-    C --> D["Persist app state\nterminal-metadata.json"]
-    C --> E["Launch ConPTY helper"]
-    E --> F["ConPTYHost\nJSON stdin/stdout protocol"]
-    F --> G["Windows shell process\ncmd.exe / pwsh.exe"]
-    F --> H["Output / started / exit / error events"]
-    H --> C
+    A["TypeScript Renderer\nmainview + xterm.js"] --> B["Electroview RPC bridge"]
+    B --> C["Bun host layer\nAppStateStore + SessionManager"]
+    C --> D["ElectroBun runtime\nBrowserWindow / BrowserView"]
+    C --> E["Persist state\nuserData/terminal-metadata.json"]
+    C --> F["Launch ConPTYHost"]
+    F --> G["ConPTY helper\nJSON stdin/stdout protocol"]
+    G --> H["Windows shell process"]
+    G --> C
     C --> B
     B --> A
-    A --> I["xterm.js terminal surface"]
 ```
 
-Summary:
+### Host Responsibilities
 
-- The renderer owns the project tree, status UI, settings, and terminal surface.
-- The Rust backend owns terminal definitions, session state, helper discovery, and desktop window commands.
-- The C# helper owns pseudoconsole creation and shell process I/O.
+On `main`, the Bun host layer is responsible for:
 
-Architectural implication:
+- Loading and saving app metadata.
+- Owning the project and terminal catalog.
+- Launching and tracking live terminal sessions.
+- Translating helper events into UI messages.
+- Managing desktop window commands such as minimize, maximize, and close.
 
-- This design is more cohesive than the WPF path because the app owns the terminal UI and session protocol directly.
-- It is still polyglot and somewhat duplicated because state models now exist separately in C# and Rust.
+### Technology Placement
 
-## ElectroBun vs Tauri
+TypeScript and Bun are used heavily here because:
 
-### What Stayed The Same
+- The renderer and the host can share one language ecosystem.
+- UI contracts and host logic can evolve together without crossing a Rust boundary.
+- The development model is close to a web-first application with desktop capabilities added by ElectroBun.
 
-- The project folder [src/TerminalWindowManager.ElectroBun](../../src/TerminalWindowManager.ElectroBun) remained the home of the web-based desktop shell.
-- The UI still uses TypeScript and `xterm.js`.
-- The ConPTY helper remained the Windows-native execution boundary for shell sessions.
-- The product direction stayed focused on a custom terminal manager UI rather than a plain wrapper over `wt.exe`.
+### Architectural Strengths
 
-### What Changed
+- The host and renderer are conceptually close because both live in the JavaScript and TypeScript world.
+- State flow is easy to reason about for a web-heavy team.
+- The ConPTY helper remains isolated, so Bun does not need to own Windows pseudoconsole details directly.
+- The app is relatively cohesive if the team wants to stay close to Bun and TypeScript.
 
-- ElectroBun packaging/runtime was replaced by Tauri packaging/runtime.
-- A Rust backend now sits between the web renderer and the helper process.
-- The desktop shell now uses Tauri `invoke` commands and event listeners instead of the previous ElectroBun host integration.
-- Tauri capabilities and window permissions now matter for operations such as dragging, window controls, and event delivery.
+### Architectural Tradeoffs
 
-### Why Tauri Fits Better Than ElectroBun Here
+- The desktop shell depends on a less common runtime stack than Tauri.
+- The host layer mixes application orchestration, desktop integration, and persistence inside the Bun side of the shell.
+- Operational concerns such as packaging and resource copying are handled through ElectroBun-specific build behavior.
+- The architecture is viable, but it is more specialized and depends more heavily on ElectroBun-specific conventions.
 
-- Tauri gives a clear native backend boundary in Rust for session lifecycle, helper resolution, persistence, and desktop APIs.
-- The web UI can remain in TypeScript without owning low-level desktop responsibilities.
-- Tauri packaging is closer to a conventional native desktop application model than the previous setup.
-- The command and event bridge is explicit, which makes system behavior easier to reason about than implicit host integration.
+## Alternative B: Tauri Architecture On The Current Branch
 
-### Why The Historical ElectroBun Naming Still Matters
+The current branch Tauri architecture keeps the same renderer and the same ConPTY helper, but replaces the host layer:
 
-- The folder name can mislead maintainers into thinking the runtime is still ElectroBun-first.
-- Compatibility names such as `Electroview` obscure that the current bridge is Tauri-specific.
-- Build and release discussions still need to distinguish between historical ElectroBun artifacts and the actual Tauri architecture.
+- TypeScript renderer for the UI.
+- Rust backend for state, persistence, session orchestration, and native desktop operations.
+- Tauri commands and events for the app bridge.
+- C# ConPTY helper for native pseudoconsole handling.
+
+### Runtime Shape
+
+```mermaid
+flowchart TD
+    A["TypeScript Renderer\nmainview + xterm.js"] --> B["Tauri bridge\ninvoke + events"]
+    B --> C["Rust backend\nSessionManager + AppStateStore"]
+    C --> D["Tauri runtime\nwindowing + resources"]
+    C --> E["Persist state\napp data/terminal-metadata.json"]
+    C --> F["Resolve and launch ConPTYHost"]
+    F --> G["ConPTY helper\nJSON stdin/stdout protocol"]
+    G --> H["Windows shell process"]
+    G --> C
+    C --> B
+    B --> A
+```
+
+### Host Responsibilities
+
+On the current branch, the Rust backend is responsible for:
+
+- Loading and saving app metadata.
+- Owning the project and terminal catalog.
+- Launching and tracking live terminal sessions.
+- Translating helper events into Tauri events.
+- Managing desktop window commands and resource lookup.
+
+### Technology Placement
+
+Rust and Tauri are used here because:
+
+- Tauri naturally expects a native backend in Rust.
+- Native process management, resource resolution, and lifecycle logic sit behind a narrow host boundary.
+- The renderer remains in TypeScript, but low-level desktop responsibilities move out of the web stack.
+
+### Architectural Strengths
+
+- The desktop boundary is explicit: UI in TypeScript, native host in Rust, ConPTY execution in C#.
+- Tauri provides a conventional desktop packaging and resource model.
+- The event and command surfaces are explicit and easier to isolate operationally.
+- The architecture is well-suited for hardening native concerns such as helper discovery, app resources, and startup diagnostics.
+
+### Architectural Tradeoffs
+
+- The system becomes more polyglot: TypeScript, Rust, and C# all carry business-significant logic.
+- State models now need to stay aligned across Rust and TypeScript.
+- The renderer no longer shares a runtime language with the host layer.
+- The team pays a higher cross-language coordination cost than in the ElectroBun alternative.
+
+## Shared Architecture Across Both Alternatives
+
+Even though the host layer changes, several system decisions stay the same:
+
+- The user works with projects and terminals rather than one-off shell windows.
+- The renderer owns the visual terminal surface through `xterm.js`.
+- Live shell execution is delegated to [TerminalWindowManager.ConPTYHost](../../src/TerminalWindowManager.ConPTYHost).
+- The helper and the host communicate through a structured stdin/stdout protocol.
+- Diagnostic data and recent session failure context are treated as first-class parts of terminal state.
+
+This is important because it means the architecture change is not a full product rewrite. It is primarily a replacement of the desktop host layer and the IPC model around it.
+
+## Direct Comparison
+
+### Product Shape
+
+Both alternatives deliver the same user-facing concept:
+
+- A desktop app with a custom project tree.
+- Terminal tabs represented as managed console records.
+- Terminal rendering inside the application rather than through embedded Windows Terminal windows.
+
+The difference is not the feature idea. The difference is which host stack owns the application shell.
+
+### Desktop Runtime
+
+ElectroBun on `main`:
+
+- The runtime is ElectroBun.
+- Windowing and host-side RPC are ElectroBun concepts.
+- Packaging and copied resources follow ElectroBun build rules.
+
+Tauri on the current branch:
+
+- The runtime is Tauri.
+- Windowing, capabilities, resources, and app events are Tauri concepts.
+- Packaging and copied resources follow Tauri resource rules.
+
+### Host Language And Responsibility Split
+
+ElectroBun on `main`:
+
+- The host is implemented in Bun and TypeScript.
+- State store, session manager, and desktop integration stay near the web stack.
+
+Tauri on the current branch:
+
+- The host is implemented in Rust.
+- The renderer becomes more of a client to a native backend rather than sharing the same host language.
+
+### IPC Model
+
+ElectroBun on `main`:
+
+- Uses ElectroBun RPC between Bun and the renderer.
+- The bridge feels like one application spread across host and webview code.
+
+Tauri on the current branch:
+
+- Uses `invoke` commands plus named events.
+- The bridge is more explicitly command-oriented and transport-oriented.
+
+### State Ownership
+
+ElectroBun on `main`:
+
+- Durable app state is owned in the Bun host layer.
+- The renderer consumes and reacts to that state.
+
+Tauri on the current branch:
+
+- Durable app state is owned in the Rust backend.
+- The renderer consumes a TypeScript projection of Rust-owned models.
+
+### Packaging And Operational Model
+
+ElectroBun on `main`:
+
+- Relies on ElectroBun-specific build and packaging behavior.
+- Helper staging is handled through ElectroBun copy configuration.
+
+Tauri on the current branch:
+
+- Relies on Tauri's resource model and desktop bundle structure.
+- Helper staging is handled through Tauri resources plus runtime resolution logic.
+
+### Team Ergonomics
+
+ElectroBun on `main` is a better fit when:
+
+- The team wants the host layer to stay close to TypeScript and Bun.
+- Fast iteration in one dominant language is more important than native separation.
+- The team is comfortable standardizing on ElectroBun-specific tooling.
+
+Tauri on the current branch is a better fit when:
+
+- The team wants a stronger native host boundary.
+- Packaging, resource resolution, and desktop process orchestration need to be hardened as first-class concerns.
+- The team is comfortable operating a more explicitly polyglot architecture.
 
 ## Technology Placement And Rationale
 
-### C#
+### TypeScript
 
-Used in:
+Used in both alternatives for:
 
-- [TerminalWindowManager.Core](../../src/TerminalWindowManager.Core)
-- [TerminalWindowManager.Terminal](../../src/TerminalWindowManager.Terminal)
-- [TerminalWindowManager.App](../../src/TerminalWindowManager.App)
-- [TerminalWindowManager.ConPTYHost](../../src/TerminalWindowManager.ConPTYHost)
+- The desktop renderer.
+- The UI state projection.
+- `xterm.js` integration and interaction handling.
 
 Why:
 
-- The original system is Windows-first and desktop-native.
-- WPF and Win32 interop are natural fits in .NET on Windows.
-- The ConPTY helper already uses Windows APIs directly and fits well in a focused .NET executable.
+- It is productive for rich interactive desktop UI.
+- The project tree, dialogs, status surfaces, and terminal viewport are natural web-style UI concerns.
+
+### `xterm.js`
+
+Used in both alternatives for:
+
+- In-app terminal rendering.
+
+Why:
+
+- It lets the product own the terminal surface directly.
+- It removes dependence on embedding a foreign terminal window.
+
+### ElectroBun
+
+Used on `main` for:
+
+- Desktop runtime.
+- Window integration.
+- Renderer-to-host RPC.
+
+Why:
+
+- It keeps the host close to Bun and TypeScript.
+- It offers a web-native desktop development model with relatively little language switching.
+
+### Bun
+
+Used on `main` for:
+
+- Host-side state management.
+- Session lifecycle orchestration.
+- Metadata persistence and diagnostics flow.
+
+Why:
+
+- It keeps most of the application logic in the same language family as the renderer.
+
+### Tauri
+
+Used on the current branch for:
+
+- Desktop runtime.
+- App packaging.
+- Command and event bridging.
+- Resource and window integration.
+
+Why:
+
+- It provides a clearer native desktop shell boundary.
+- It fits well when the host layer needs explicit resource, process, and lifecycle control.
 
 ### Rust
 
-Used in:
+Used on the current branch for:
 
-- [TerminalWindowManager.ElectroBun/src-tauri](../../src/TerminalWindowManager.ElectroBun/src-tauri)
-
-Why:
-
-- Tauri expects a Rust backend.
-- Rust is a good fit for a stateful desktop host that manages native resources and process orchestration.
-- It gives the web renderer a narrow, explicit command surface.
-
-### TypeScript
-
-Used in:
-
-- [TerminalWindowManager.ElectroBun/src/mainview](../../src/TerminalWindowManager.ElectroBun/src/mainview)
-- [TerminalWindowManager.ElectroBun/src/shared](../../src/TerminalWindowManager.ElectroBun/src/shared)
+- Host-side state management.
+- Session lifecycle orchestration.
+- Helper resolution and runtime diagnostics.
 
 Why:
 
-- It is productive for complex interactive UI.
-- `xterm.js` is already a browser-side terminal renderer.
-- The custom sidebar, dialogs, and window chrome are easier to iterate on in a web stack than in a native terminal host.
+- It is a strong fit for native orchestration work.
+- It makes the host layer less dependent on the web runtime.
 
-### WPF
+### C#
 
-Used in:
+Used in [TerminalWindowManager.ConPTYHost](../../src/TerminalWindowManager.ConPTYHost) and the older WPF product line for:
 
-- [TerminalWindowManager.App](../../src/TerminalWindowManager.App)
-
-Why:
-
-- It provides mature Windows desktop UI patterns and `HwndHost`.
-- It is specifically useful when the application is embedding foreign native windows.
-
-### xterm.js
-
-Used in:
-
-- [src/mainview/main.ts](../../src/TerminalWindowManager.ElectroBun/src/mainview/main.ts)
+- Windows-native integration.
+- Pseudoconsole handling.
+- The earlier WPF shell and Windows Terminal hosting logic.
 
 Why:
 
-- It gives the Tauri path a real terminal surface inside the app rather than embedding another app window.
-- It aligns well with a web renderer architecture and explicit session protocol.
+- The repository is still strongly Windows-oriented.
+- ConPTY and the older WPF architecture both fit naturally in .NET.
 
-## State And Persistence
+## How The Older WPF Path Relates To Both Alternatives
 
-The repository currently has two separate persistence stories:
+The older WPF path is still important context:
 
-- The WPF path stores project catalog data in `%LOCALAPPDATA%\TerminalWindowManager\projects.json`.
-- The Tauri path stores app state in the Tauri app data directory as `terminal-metadata.json`.
+- It represents an earlier architecture where the app managed terminal windows instead of rendering the terminal itself.
+- It uses [TerminalWindowManager.Terminal](../../src/TerminalWindowManager.Terminal) to launch and host `wt.exe`.
+- It depends on Win32 window parenting rather than on `xterm.js` and a ConPTY session protocol.
 
-This is an important architectural boundary:
+The ElectroBun and Tauri alternatives should therefore be viewed as two different answers to the same newer architectural decision:
 
-- The WPF app persists C# project models meant for Windows Terminal hosting.
-- The Tauri app persists Rust models meant for ConPTY-backed internal sessions.
-
-Those are conceptually similar, but not actually one shared domain model.
-
-## Main Architectural Differences Between The Two Paths
-
-### Terminal Ownership
-
-- WPF delegates terminal execution and rendering to Windows Terminal.
-- Tauri owns the terminal renderer and session orchestration, then delegates only the pseudoconsole mechanics to the helper.
-
-### Failure Surface
-
-- WPF is sensitive to external window discovery, HWND parenting, and Windows Terminal behavior.
-- Tauri is sensitive to helper discovery, session protocol correctness, event delivery, and web/native bridge wiring.
-
-### Flexibility
-
-- WPF is constrained by what Windows Terminal exposes.
-- Tauri can evolve terminal UX, telemetry, settings, and session lifecycle independently.
-
-### Platform Coupling
-
-- Both paths are Windows-only today.
-- The WPF path is even more tightly coupled to Windows-specific UI hosting.
-- The Tauri path is architecturally more portable at the UI layer, but still anchored to Windows through ConPTY and the helper.
-
-## Current Structural Strengths
-
-- The repository clearly separates the helper process from the desktop host.
-- The Tauri path has a stronger ownership model for terminal state than the WPF path.
-- The WPF path keeps its Windows Terminal hosting code isolated in a dedicated project.
-- The TypeScript renderer and Rust backend communicate through explicit contracts rather than shared mutable state.
-
-## Current Structural Weaknesses
-
-- The repository maintains two desktop architectures with overlapping concepts and different persistence models.
-- The `ElectroBun` folder name no longer matches the active runtime technology.
-- Core state concepts are duplicated across C# and Rust instead of being defined once and projected into each runtime.
-- The build and packaging story for the helper is still operationally delicate because desktop hosts need to discover the helper correctly in multiple environments.
+- Own the terminal surface directly.
+- Keep shell execution behind a ConPTY helper.
+- Use a web-native renderer for the manager UI.
 
 ## Recommendations
 
-### 1. Choose One Strategic Desktop Shell
+### 1. Keep The Comparison Explicit In Repository Docs
 
-The most important architecture decision is whether the WPF path is still strategic.
+If both alternatives remain viable references, the repository should say so directly:
 
-If Tauri is the future:
+- Describe `main` as the ElectroBun-based alternative.
+- Describe the current branch as the Tauri-based alternative.
+- Avoid implying that the folder name alone describes the runtime model.
 
-- Treat WPF as legacy.
-- Stop expanding the WPF-specific model and hosting behavior.
-- Focus architectural investment on the Tauri path and the helper protocol.
+That will prevent maintainers from confusing "historical folder name" with "actual host architecture".
 
-If both must remain:
+### 2. Neutralize The Project Naming
 
-- Explicitly document them as separate products with separate lifecycle expectations.
-
-### 2. Define One Canonical Domain Model
-
-Right now, the repository has:
-
-- C# models for projects and terminals in the WPF path.
-- Rust models for projects, terminals, status, diagnostics, and defaults in the Tauri path.
-- TypeScript mirrors of the Rust model for the renderer.
-
-Recommended change:
-
-- Define one canonical application-state contract.
-- Generate or validate language-specific projections from that contract.
-- Keep UI-only fields local to each frontend, but keep durable state and session protocol shared by design.
-
-### 3. Make The ConPTY Protocol A First-Class Boundary
-
-The helper process is already a true subsystem.
-
-Recommended change:
-
-- Document its stdin/stdout protocol as an explicit contract.
-- Version the protocol.
-- Add focused tests around startup, resize, input, exit, and error events.
-
-That would reduce regressions in the exact area that has recently been fragile.
-
-### 4. Rename The Tauri Shell Project
-
-The current folder name is historically accurate but architecturally misleading.
+If the project is expected to keep multiple host experiments or migrations, a neutral name would reduce confusion.
 
 Recommended options:
 
-- Rename the folder to `TerminalWindowManager.Tauri`.
-- Keep a short migration note explaining the former ElectroBun origin.
+- Rename [TerminalWindowManager.ElectroBun](../../src/TerminalWindowManager.ElectroBun) to a neutral shell name such as `TerminalWindowManager.DesktopShell`.
+- Or split the shell implementations into separate project directories if both are meant to live long-term.
 
-This will make build scripts, documentation, and mental models much clearer.
+### 3. Treat ConPTYHost As A Stable Product Subsystem
 
-### 5. Separate Build Inputs From Runtime Resources More Clearly
+Regardless of host choice, [TerminalWindowManager.ConPTYHost](../../src/TerminalWindowManager.ConPTYHost) is shared critical infrastructure.
 
-The helper packaging path has been a recurring source of issues.
+Recommended changes:
+
+- Write down its protocol as a versioned contract.
+- Add tests around startup, resize, input, exit, and error events.
+- Keep host-specific glue outside the helper protocol itself.
+
+### 4. Define One Canonical State Contract
+
+Both alternatives model nearly the same domain:
+
+- Projects.
+- Terminals.
+- Activity and session lifecycle.
+- Diagnostics and failure summaries.
 
 Recommended change:
 
-- Treat copied helper binaries as build outputs only, not source-controlled content.
-- Keep resource staging deterministic and explicit in one place.
-- Add a build verification step that asserts the helper can be resolved in dev and packaged modes.
+- Define one canonical app-state contract and validate each host against it.
 
-### 6. Add Architecture-Level Tests
+That recommendation helps both alternatives:
 
-The repo currently relies heavily on manual verification.
+- ElectroBun benefits because host and renderer stay aligned more safely.
+- Tauri benefits because Rust and TypeScript projections stay aligned more safely.
 
-Recommended priorities:
+### 5. Evaluate The Host Choice By Team And Operations, Not By UI
 
-- Session manager tests in Rust.
-- Protocol-level tests for the helper.
-- Small integration checks for dev and packaged helper discovery.
-- Snapshot or schema validation for the TypeScript/Rust state contract.
+The renderer story is already similar in both branches. The real decision is the host layer.
+
+Recommended evaluation criteria:
+
+- Choose ElectroBun if end-to-end TypeScript and Bun ergonomics are the priority.
+- Choose Tauri if native hardening, explicit resource handling, and a clearer host boundary are the priority.
+
+### 6. If Both Alternatives Continue, Separate Their Operational Pipelines
+
+If both architectures are kept alive as real options, they should not rely on ambiguous shared assumptions.
+
+Recommended change:
+
+- Give each alternative its own build, packaging, and release expectations.
+- Make helper staging and runtime resource lookup explicit per host runtime.
+- Avoid mixed documentation that talks about one shell while assuming the packaging model of the other.
 
 ## Recommended Direction
 
-If the goal is a durable long-term architecture, the strongest direction is:
+At the system level, the strongest long-term pattern is already visible in both alternatives:
 
-1. Standardize on the Tauri path as the primary desktop shell.
-2. Keep `ConPTYHost` as a dedicated subsystem with an explicit protocol contract.
-3. Retire or freeze the WPF/Windows Terminal hosting path unless it serves a specific migration need.
-4. Unify domain state across Rust and TypeScript, and reduce duplicated modeling across the repository.
+- Keep the renderer web-native.
+- Keep terminal rendering inside the app with `xterm.js`.
+- Keep ConPTY execution behind a dedicated helper.
+- Keep the desktop host layer small, explicit, and replaceable.
 
-That direction aligns the product around owning terminal UX directly instead of trying to host another terminal application inside a manager shell.
+That means the most valuable architectural question is not "ElectroBun or Tauri?" in isolation. It is:
+
+- Which host runtime is the best long-term owner of state, lifecycle, packaging, and native desktop behavior for this product?
+
+This document should therefore be used as a comparison of two valid host-layer designs built around one shared terminal product architecture.
