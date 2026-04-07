@@ -272,7 +272,17 @@ app.innerHTML = `
 				</label>
 				<label class="settings-field">
 					<span class="settings-label">Default shell</span>
-					<input id="settings-dialog-default-shell" class="dialog-input" type="text" />
+					<input
+						id="settings-dialog-default-shell"
+						class="dialog-input"
+						type="text"
+						list="settings-shell-options"
+						spellcheck="false" />
+					<datalist id="settings-shell-options">
+						<option value="powershell.exe"></option>
+						<option value="cmd.exe"></option>
+					</datalist>
+					<span class="settings-hint">Choose powershell.exe, cmd.exe, or type another executable or full path.</span>
 				</label>
 				<div class="confirm-dialog-actions">
 					<button class="secondary-button" value="cancel">Cancel</button>

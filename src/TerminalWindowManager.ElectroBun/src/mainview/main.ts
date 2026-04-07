@@ -114,6 +114,9 @@ let inspectorCollapsed = false;
 let contextMenuState: { kind: "project" | "terminal"; id: string } | null = null;
 let pendingConfirmResolve: ((confirmed: boolean) => void) | null = null;
 let pendingRenameResolve: ((value: string | null) => void) | null = null;
+let pendingSettingsResolve:
+	| ((value: { defaultCwd: string; defaultShell: string } | null) => void)
+	| null = null;
 
 const terminalViews = new Map<string, TerminalView>();
 const utf8Decoder = new TextDecoder();
@@ -175,7 +178,7 @@ app.innerHTML = `
 			</div>
 
 			<div class="sidebar-bottom">
-				<button class="nav-item nav-item-footer" type="button">
+				<button id="settings-button" class="nav-item nav-item-footer" type="button">
 					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 						<circle cx="12" cy="12" r="3"></circle>
 						<path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
@@ -258,6 +261,34 @@ app.innerHTML = `
 				</div>
 			</form>
 		</dialog>
+		<dialog id="settings-dialog" class="confirm-dialog">
+			<form method="dialog" class="confirm-dialog-panel">
+				<h3 class="confirm-dialog-title">Settings</h3>
+				<p class="confirm-dialog-message">Set the default working directory and shell used for new consoles.</p>
+				<label class="settings-field">
+					<span class="settings-label">Default working directory</span>
+					<input id="settings-dialog-default-cwd" class="dialog-input" type="text" />
+				</label>
+				<label class="settings-field">
+					<span class="settings-label">Default shell</span>
+					<input
+						id="settings-dialog-default-shell"
+						class="dialog-input"
+						type="text"
+						list="settings-shell-options"
+						spellcheck="false" />
+					<datalist id="settings-shell-options">
+						<option value="powershell.exe"></option>
+						<option value="cmd.exe"></option>
+					</datalist>
+					<span class="settings-hint">Choose powershell.exe, cmd.exe, or type another executable or full path.</span>
+				</label>
+				<div class="confirm-dialog-actions">
+					<button class="secondary-button" value="cancel">Cancel</button>
+					<button id="settings-dialog-save" class="primary-button" value="confirm">Save</button>
+				</div>
+			</form>
+		</dialog>
 	</div>
 `;
 
@@ -302,6 +333,14 @@ const renameDialogMessage =
 	queryHtmlElement<HTMLParagraphElement>("rename-dialog-message");
 const renameDialogInput =
 	queryHtmlElement<HTMLInputElement>("rename-dialog-input");
+const settingsButton =
+	queryHtmlElement<HTMLButtonElement>("settings-button");
+const settingsDialog =
+	queryHtmlElement<HTMLDialogElement>("settings-dialog");
+const settingsDialogInputCwd =
+	queryHtmlElement<HTMLInputElement>("settings-dialog-default-cwd");
+const settingsDialogInputShell =
+	queryHtmlElement<HTMLInputElement>("settings-dialog-default-shell");
 const winMinimize = queryHtmlElement<HTMLButtonElement>("win-minimize");
 const winMaximize = queryHtmlElement<HTMLButtonElement>("win-maximize");
 const winClose = queryHtmlElement<HTMLButtonElement>("win-close");
@@ -327,6 +366,14 @@ winMaximize.addEventListener("click", () => {
 
 winClose.addEventListener("click", () => {
 	void getRendererRpc().proxy.request.windowClose({});
+});
+
+settingsButton.addEventListener("click", () => {
+	void openSettingsDialog().catch((error: unknown) => {
+		const message = error instanceof Error ? error.message : String(error);
+		console.error("Settings failed", error);
+		setStatus(`Settings failed: ${message}`);
+	});
 });
 
 newProjectButton.addEventListener("click", () => {
@@ -563,6 +610,23 @@ renameDialog.addEventListener("close", () => {
 
 	resolver(
 		renameDialog.returnValue === "confirm" ? renameDialogInput.value.trim() : null,
+	);
+});
+
+settingsDialog.addEventListener("close", () => {
+	const resolver = pendingSettingsResolve;
+	pendingSettingsResolve = null;
+	if (!resolver) {
+		return;
+	}
+
+	resolver(
+		settingsDialog.returnValue === "confirm"
+			? {
+					defaultCwd: settingsDialogInputCwd.value.trim(),
+					defaultShell: settingsDialogInputShell.value.trim(),
+				}
+			: null,
 	);
 });
 
@@ -856,6 +920,31 @@ function showRenameDialog(options: {
 	});
 }
 
+function showSettingsDialog(options: {
+	defaultCwd: string;
+	defaultShell: string;
+}): Promise<{ defaultCwd: string; defaultShell: string } | null> {
+	if (pendingSettingsResolve) {
+		pendingSettingsResolve(null);
+		pendingSettingsResolve = null;
+	}
+
+	settingsDialogInputCwd.value = options.defaultCwd;
+	settingsDialogInputShell.value = options.defaultShell;
+	settingsDialog.returnValue = "cancel";
+	settingsDialog.showModal();
+	requestAnimationFrame(() => {
+		settingsDialogInputCwd.focus();
+		settingsDialogInputCwd.select();
+	});
+
+	return new Promise<{ defaultCwd: string; defaultShell: string } | null>(
+		(resolve) => {
+			pendingSettingsResolve = resolve;
+		},
+	);
+}
+
 async function createProjectAndBeginRename(): Promise<void> {
 	const placeholderName = getNextProjectPlaceholderName();
 	state = await getRendererRpc().proxy.request.createProject({
@@ -1054,6 +1143,23 @@ async function createConsoleFromProject(projectId: string): Promise<void> {
 
 	startEditingTerminal(terminal.id, terminal.name, { activateOnCommit: true });
 	setStatus(`Created '${terminal.name}' in '${project.name}'. Type a console name and press Enter to launch it.`);
+}
+
+async function openSettingsDialog(): Promise<void> {
+	const settings = await showSettingsDialog({
+		defaultCwd: state.defaults.defaultCwd,
+		defaultShell: state.defaults.defaultShell,
+	});
+
+	if (!settings) {
+		return;
+	}
+
+	state = await getRendererRpc().proxy.request.updateDefaults(settings);
+	renderTree();
+	renderInspector();
+	renderStatusBoard();
+	setStatus("Updated default console settings.");
 }
 
 async function selectTerminal(terminalId: string): Promise<void> {

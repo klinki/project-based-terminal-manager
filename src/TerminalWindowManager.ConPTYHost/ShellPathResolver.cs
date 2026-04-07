@@ -4,9 +4,9 @@ internal static class ShellPathResolver
 {
     private static readonly string[] FallbackShells =
     [
-        "pwsh.exe",
         "powershell.exe",
-        "cmd.exe"
+        "cmd.exe",
+        "pwsh.exe"
     ];
 
     public static string Resolve(string? requestedShell)
@@ -33,7 +33,7 @@ internal static class ShellPathResolver
         }
 
         throw new FileNotFoundException(
-            "No supported shell executable was found. Tried pwsh.exe, powershell.exe, and cmd.exe.");
+            "No supported shell executable was found. Tried powershell.exe, cmd.exe, and pwsh.exe.");
     }
 
     private static string? ResolveCandidate(string candidate)

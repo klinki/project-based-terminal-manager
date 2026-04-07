@@ -47,10 +47,7 @@ export class AppStateStore {
 	private createDefaults(): AppDefaults {
 		return {
 			defaultCwd: process.cwd(),
-			defaultShell:
-				process.env["COMSPEC"] ||
-				process.env["SHELL"] ||
-				"powershell.exe",
+			defaultShell: this.getDefaultShell(),
 		};
 	}
 
@@ -87,11 +84,7 @@ export class AppStateStore {
 			projectId: terminal.projectId ?? "",
 			name: terminal.name ?? "Terminal",
 			cwd: terminal.cwd ?? process.cwd(),
-			shell:
-				terminal.shell ||
-				process.env["COMSPEC"] ||
-				process.env["SHELL"] ||
-				"powershell.exe",
+			shell: terminal.shell || this.getDefaultShell(),
 			status,
 			activity: this.createDefaultActivity(status),
 			lastExitCode: terminal.lastExitCode ?? null,
@@ -111,6 +104,14 @@ export class AppStateStore {
 				activity: this.createDefaultActivity(terminal.status),
 			})),
 		};
+	}
+
+	private getDefaultShell(): string {
+		if (process.platform === "win32") {
+			return "powershell.exe";
+		}
+
+		return process.env["SHELL"] || process.env["COMSPEC"] || "sh";
 	}
 
 	private createDefaultActivity(status: TerminalRecord["status"]): TerminalActivity {

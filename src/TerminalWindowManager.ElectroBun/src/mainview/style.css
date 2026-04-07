@@ -972,6 +972,22 @@ input {
 	gap: 10px;
 }
 
+.settings-field {
+	display: grid;
+	gap: 6px;
+}
+
+.settings-label {
+	font-size: 0.78rem;
+	color: var(--muted);
+}
+
+.settings-hint {
+	font-size: 0.76rem;
+	color: var(--muted-strong);
+	line-height: 1.5;
+}
+
 @keyframes activity-ring {
 	0% {
 		transform: scale(0.8);

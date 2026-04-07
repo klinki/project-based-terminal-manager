@@ -162,6 +162,10 @@ export type TerminalManagerRpc = {
 				params: { terminalId: string; cols: number; rows: number };
 				response: AppState;
 			};
+			updateDefaults: {
+				params: { defaultCwd: string; defaultShell: string };
+				response: AppState;
+			};
 			windowMinimize: { params: {}; response: { ok: boolean } };
 			windowMaximize: { params: {}; response: { ok: boolean } };
 			windowClose: { params: {}; response: { ok: boolean } };

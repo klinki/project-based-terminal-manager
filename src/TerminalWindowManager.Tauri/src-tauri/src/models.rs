@@ -281,9 +281,17 @@ fn default_cwd() -> String {
 }
 
 fn default_shell() -> String {
-    env::var("COMSPEC")
-        .or_else(|_| env::var("SHELL"))
-        .unwrap_or_else(|_| "powershell.exe".to_string())
+    #[cfg(windows)]
+    {
+        return "powershell.exe".to_string();
+    }
+
+    #[cfg(not(windows))]
+    {
+        env::var("SHELL")
+            .or_else(|_| env::var("COMSPEC"))
+            .unwrap_or_else(|_| "sh".to_string())
+    }
 }
 
 fn new_uuid_string() -> String {

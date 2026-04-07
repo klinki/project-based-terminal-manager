@@ -233,6 +233,22 @@ const rpc = BrowserView.defineRPC<TerminalManagerRpc>({
 				return snapshotState();
 			},
 
+			updateDefaults: ({ defaultCwd, defaultShell }) => {
+				const trimmedCwd = defaultCwd.trim();
+				const trimmedShell = defaultShell.trim();
+
+				if (trimmedCwd) {
+					state.defaults.defaultCwd = trimmedCwd;
+				}
+
+				if (trimmedShell) {
+					state.defaults.defaultShell = trimmedShell;
+				}
+
+				persistState();
+				return snapshotState();
+			},
+
 			windowMinimize: () => {
 				mainWindow.minimize();
 				return { ok: true };
