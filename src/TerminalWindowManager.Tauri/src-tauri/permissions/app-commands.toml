@@ -1,0 +1,21 @@
+[[permission]]
+identifier = "app-commands"
+description = "Enables the Terminal Window Manager application commands used by the frontend."
+commands.allow = [
+  "get_initial_state",
+  "create_project",
+  "rename_project",
+  "delete_project",
+  "create_terminal",
+  "rename_terminal",
+  "delete_terminal",
+  "activate_terminal",
+  "send_input",
+  "resize_terminal",
+  "restart_terminal",
+  "window_minimize",
+  "window_maximize",
+  "window_close",
+  "stop_all_sessions",
+  "update_defaults",
+]

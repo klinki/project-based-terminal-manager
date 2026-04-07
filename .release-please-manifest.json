@@ -1,3 +1,4 @@
 {
-  "src/TerminalWindowManager.ElectroBun": "0.0.1"
+  "src/TerminalWindowManager.ElectroBun": "0.0.1",
+  "src/TerminalWindowManager.Tauri": "0.0.1"
 }

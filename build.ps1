@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("All", "DotNet", "ElectroBun", "Desktop")]
+    [ValidateSet("All", "DotNet", "ElectroBun", "Tauri", "Desktop", "Desktop-ElectroBun", "Desktop-Tauri")]
     [string]$Target = "All",
 
     [ValidateSet("Debug", "Release")]
@@ -13,7 +13,8 @@ $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
 $repoRoot = Split-Path -Parent $PSCommandPath
-$frontendDir = Join-Path $repoRoot "src\TerminalWindowManager.ElectroBun"
+$electroBunDir = Join-Path $repoRoot "src\TerminalWindowManager.ElectroBun"
+$tauriDir = Join-Path $repoRoot "src\TerminalWindowManager.Tauri"
 $conPtyHostProject = Join-Path $repoRoot "src\TerminalWindowManager.ConPTYHost\TerminalWindowManager.ConPTYHost.csproj"
 $dotNetProjects = @(
     Join-Path $repoRoot "src\TerminalWindowManager.Core\TerminalWindowManager.Core.csproj"
@@ -104,21 +105,30 @@ function Build-DotNetProjects {
 }
 
 function Ensure-FrontendDependencies {
-    Assert-CommandAvailable -CommandName "bun" -InstallHint "Install Bun 1.x and make sure 'bun' is on PATH."
-    Assert-PathExists -Path $frontendDir -Description "ElectroBun project directory"
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ProjectDirectory,
 
-    $nodeModulesDir = Join-Path $frontendDir "node_modules"
+        [Parameter(Mandatory = $true)]
+        [string]$ProjectLabel
+    )
+
+    Assert-CommandAvailable -CommandName "bun" -InstallHint "Install Bun 1.x and make sure 'bun' is on PATH."
+    Assert-PathExists -Path $ProjectDirectory -Description "$ProjectLabel project directory"
+
+    $nodeModulesDir = Join-Path $ProjectDirectory "node_modules"
     if ($ForceFrontendInstall -or -not (Test-Path -Path $nodeModulesDir)) {
-        Invoke-ExternalCommand -FilePath "bun" -ArgumentList @("install") -WorkingDirectory $frontendDir
+        Invoke-ExternalCommand -FilePath "bun" -ArgumentList @("install") -WorkingDirectory $ProjectDirectory
         return
     }
 
-    Write-Host "==> Reusing existing frontend dependencies in src\TerminalWindowManager.ElectroBun\node_modules" -ForegroundColor DarkGray
+    $relativeNodeModulesDir = [System.IO.Path]::GetRelativePath($repoRoot, $nodeModulesDir)
+    Write-Host "==> Reusing existing frontend dependencies in $relativeNodeModulesDir" -ForegroundColor DarkGray
 }
 
-function Build-ElectroBunView {
+function Build-ElectroBunShell {
     Assert-CommandAvailable -CommandName "dotnet" -InstallHint "Install the .NET 10 SDK and make sure 'dotnet' is on PATH."
-    Ensure-FrontendDependencies
+    Ensure-FrontendDependencies -ProjectDirectory $electroBunDir -ProjectLabel "ElectroBun"
 
     # The ElectroBun session manager resolves the helper from bin/Debug/net10.0-windows.
     Invoke-ExternalCommand `
@@ -131,13 +141,28 @@ function Build-ElectroBunView {
             "--verbosity", "minimal"
         )
 
-    Invoke-ExternalCommand -FilePath "bun" -ArgumentList @("run", "build:view") -WorkingDirectory $frontendDir
+    Invoke-ExternalCommand -FilePath "bun" -ArgumentList @("run", "build:view") -WorkingDirectory $electroBunDir
 }
 
 function Build-ElectroBunDesktop {
+    Ensure-FrontendDependencies -ProjectDirectory $electroBunDir -ProjectLabel "ElectroBun"
+    Invoke-ExternalCommand -FilePath "bun" -ArgumentList @("run", "build:desktop") -WorkingDirectory $electroBunDir
+}
+
+function Build-TauriShell {
     Assert-CommandAvailable -CommandName "dotnet" -InstallHint "Install the .NET 10 SDK and make sure 'dotnet' is on PATH."
-    Ensure-FrontendDependencies
-    Invoke-ExternalCommand -FilePath "bun" -ArgumentList @("run", "build:desktop") -WorkingDirectory $frontendDir
+    Assert-CommandAvailable -CommandName "cargo" -InstallHint "Install the Rust toolchain and make sure 'cargo' is on PATH for Tauri builds."
+    Ensure-FrontendDependencies -ProjectDirectory $tauriDir -ProjectLabel "Tauri"
+
+    Invoke-ExternalCommand -FilePath "bun" -ArgumentList @("run", "build:host") -WorkingDirectory $tauriDir
+    Invoke-ExternalCommand -FilePath "bun" -ArgumentList @("run", "build:view") -WorkingDirectory $tauriDir
+    Invoke-ExternalCommand -FilePath "cargo" -ArgumentList @("check", "--manifest-path", "src-tauri/Cargo.toml") -WorkingDirectory $tauriDir
+}
+
+function Build-TauriDesktop {
+    Assert-CommandAvailable -CommandName "cargo" -InstallHint "Install the Rust toolchain and make sure 'cargo' is on PATH for Tauri builds."
+    Ensure-FrontendDependencies -ProjectDirectory $tauriDir -ProjectLabel "Tauri"
+    Invoke-ExternalCommand -FilePath "bun" -ArgumentList @("run", "build:desktop") -WorkingDirectory $tauriDir
 }
 
 Assert-WindowsHost
@@ -145,7 +170,8 @@ Assert-WindowsHost
 switch ($Target) {
     "All" {
         Build-DotNetProjects -BuildConfiguration $Configuration
-        Build-ElectroBunView
+        Build-ElectroBunShell
+        Build-TauriShell
     }
 
     "DotNet" {
@@ -153,11 +179,23 @@ switch ($Target) {
     }
 
     "ElectroBun" {
-        Build-ElectroBunView
+        Build-ElectroBunShell
+    }
+
+    "Tauri" {
+        Build-TauriShell
     }
 
     "Desktop" {
         Build-ElectroBunDesktop
+    }
+
+    "Desktop-ElectroBun" {
+        Build-ElectroBunDesktop
+    }
+
+    "Desktop-Tauri" {
+        Build-TauriDesktop
     }
 }
 
@@ -175,6 +213,16 @@ if ($Target -eq "All" -or $Target -eq "ElectroBun") {
     Write-Host "ElectroBun web assets: src\TerminalWindowManager.ElectroBun\dist\"
 }
 
-if ($Target -eq "Desktop") {
+if ($Target -eq "All" -or $Target -eq "Tauri") {
+    Write-Host "Tauri helper output: src\TerminalWindowManager.ConPTYHost\bin\Debug\net10.0-windows\"
+    Write-Host "Tauri web assets: src\TerminalWindowManager.Tauri\dist\"
+    Write-Host "Tauri native build cache: src\TerminalWindowManager.Tauri\src-tauri\target\"
+}
+
+if ($Target -eq "Desktop" -or $Target -eq "Desktop-ElectroBun") {
     Write-Host "ElectroBun desktop package: src\TerminalWindowManager.ElectroBun\artifacts\stable-win-x64-*.zip"
+}
+
+if ($Target -eq "Desktop-Tauri") {
+    Write-Host "Tauri desktop package: src\TerminalWindowManager.Tauri\src-tauri\target\release\bundle\"
 }

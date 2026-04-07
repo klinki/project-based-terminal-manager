@@ -54,3 +54,15 @@ src/TerminalWindowManager.ElectroBun/node_modules/
 src/TerminalWindowManager.ElectroBun/dist/
 src/TerminalWindowManager.ElectroBun/build/
 src/TerminalWindowManager.ElectroBun/artifacts/
+
+# TerminalWindowManager.Tauri generated content
+src/TerminalWindowManager.Tauri/node_modules/
+src/TerminalWindowManager.Tauri/dist/
+src/TerminalWindowManager.Tauri/src-tauri/target/
+src/TerminalWindowManager.Tauri/src-tauri/gen/
+src/TerminalWindowManager.Tauri/src-tauri/permissions/*
+!src/TerminalWindowManager.Tauri/src-tauri/permissions/app-commands.toml
+src/TerminalWindowManager.Tauri/src-tauri/.twm-diagnostics/
+src/TerminalWindowManager.Tauri/src-tauri/resources/TerminalWindowManager.ConPTYHost/*
+!src/TerminalWindowManager.Tauri/src-tauri/resources/TerminalWindowManager.ConPTYHost/.gitkeep
+!src/TerminalWindowManager.Tauri/src-tauri/resources/TerminalWindowManager.ConPTYHost/placeholder.txt
