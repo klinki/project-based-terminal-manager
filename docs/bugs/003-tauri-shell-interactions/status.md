@@ -1,10 +1,10 @@
 # Status
 
 ## Current State
-Awaiting user confirmation after fixing Tauri helper resolution and launch-failure persistence
+Awaiting user confirmation after fixing the remaining `npm run start` helper-resolution failure
 
 ## Active Attempt
-Attempt 007
+Attempt 008
 
 ## Recent Update
 - Confirmed the shell frontend was wired, but the Tauri capability file was too narrow for the app commands and custom drag region.
@@ -40,6 +40,12 @@ Attempt 007
 - The backend now resolves the ConPTY helper from Tauri resource paths first, with executable-directory and repo-layout fallbacks for dev and packaged runs.
 - Helper launch failures now mark the terminal as `error` and persist a `lastSessionFailure` instead of leaving the session stuck in `starting`.
 - `cargo check`, `bun run build:view`, and `./build.ps1 -Target Desktop` all passed after the fix.
+- User reported a remaining error when launching via `npm run start`.
+- Investigation showed `npm run start` builds the ConPTY helper in Debug under `src/TerminalWindowManager.ConPTYHost/bin/Debug/net10.0-windows`, but the resolver still does not climb far enough from `src-tauri` to reach the repo root.
+- Started fix attempt 008 to replace the fixed-depth helper lookup with an ancestor walk that works in Tauri dev mode.
+- The helper resolver now walks ancestor directories and finds repo-root Debug and Release helper outputs from a `src-tauri` working directory.
+- `cargo check` and `bun run build:host` both passed after the resolver update.
+- A focused sanity check confirmed the `npm run start` Debug helper path is now discoverable from Tauri dev mode.
 
 ## Attempt History
 - 2026-04-03: Bug workspace created.
@@ -57,6 +63,9 @@ Attempt 007
 - 2026-04-04: User reported the console was still broken and non-interactive after attempt 006.
 - 2026-04-04: Started fix attempt 007.
 - 2026-04-04: Fix attempt 007 implemented and verified locally.
+- 2026-04-07: User reported a remaining helper-resolution failure when running `npm run start`.
+- 2026-04-07: Started fix attempt 008.
+- 2026-04-07: Fix attempt 008 implemented and verified locally.
 
 ## State Change Log
 - 2026-04-03: Bug workspace created.
@@ -90,3 +99,8 @@ Attempt 007
 - 2026-04-04: Fix attempt 007 started.
 - 2026-04-04: Fix attempt 007 completed locally.
 - 2026-04-04: Awaiting user confirmation after the helper-resolution fix.
+- 2026-04-07: User reported a dev-mode helper-resolution error from `npm run start`.
+- 2026-04-07: Investigation confirmed the resolver still missed the repo-root Debug helper output.
+- 2026-04-07: Fix attempt 008 started.
+- 2026-04-07: Fix attempt 008 completed locally.
+- 2026-04-07: Awaiting user confirmation after the dev-mode helper-resolution fix.

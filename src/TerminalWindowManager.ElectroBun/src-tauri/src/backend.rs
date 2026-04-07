@@ -1150,73 +1150,64 @@ impl SessionManager {
         }
 
         if let Ok(current_dir) = std::env::current_dir() {
-            push_candidate(
-                current_dir
-                    .join("resources")
-                    .join("TerminalWindowManager.ConPTYHost")
-                    .join("TerminalWindowManager.ConPTYHost.exe"),
-            );
-            push_candidate(
-                current_dir
-                    .join("Resources")
-                    .join("TerminalWindowManager.ConPTYHost")
-                    .join("TerminalWindowManager.ConPTYHost.exe"),
-            );
-            push_candidate(
-                current_dir
-                    .join("src-tauri")
-                    .join("resources")
-                    .join("TerminalWindowManager.ConPTYHost")
-                    .join("TerminalWindowManager.ConPTYHost.exe"),
-            );
-            push_candidate(
-                current_dir
-                    .join("src")
-                    .join("TerminalWindowManager.ElectroBun")
-                    .join("src-tauri")
-                    .join("resources")
-                    .join("TerminalWindowManager.ConPTYHost")
-                    .join("TerminalWindowManager.ConPTYHost.exe"),
-            );
-            push_candidate(
-                current_dir
-                    .join("src")
-                    .join("TerminalWindowManager.ConPTYHost")
-                    .join("bin")
-                    .join("Release")
-                    .join("net10.0-windows")
-                    .join("TerminalWindowManager.ConPTYHost.exe"),
-            );
-            push_candidate(
-                current_dir
-                    .join("src")
-                    .join("TerminalWindowManager.ConPTYHost")
-                    .join("bin")
-                    .join("Debug")
-                    .join("net10.0-windows")
-                    .join("TerminalWindowManager.ConPTYHost.exe"),
-            );
-            if let Some(parent) = current_dir.parent() {
+            for search_root in current_dir.ancestors() {
                 push_candidate(
-                    parent
+                    search_root
                         .join("resources")
                         .join("TerminalWindowManager.ConPTYHost")
                         .join("TerminalWindowManager.ConPTYHost.exe"),
                 );
                 push_candidate(
-                    parent
+                    search_root
+                        .join("Resources")
                         .join("TerminalWindowManager.ConPTYHost")
-                        .join("bin")
-                        .join("Release")
-                        .join("net10.0-windows")
                         .join("TerminalWindowManager.ConPTYHost.exe"),
                 );
                 push_candidate(
-                    parent
+                    search_root
+                        .join("src-tauri")
+                        .join("resources")
                         .join("TerminalWindowManager.ConPTYHost")
-                        .join("bin")
-                        .join("Debug")
-                        .join("net10.0-windows")
+                        .join("TerminalWindowManager.ConPTYHost.exe"),
+                );
+                push_candidate(
+                    search_root
+                        .join("src")
+                        .join("TerminalWindowManager.ElectroBun")
+                        .join("src-tauri")
+                        .join("resources")
+                        .join("TerminalWindowManager.ConPTYHost")
+                        .join("TerminalWindowManager.ConPTYHost.exe"),
+                );
+                push_candidate(
+                    search_root
+                        .join("TerminalWindowManager.ConPTYHost")
+                        .join("TerminalWindowManager.ConPTYHost.exe"),
+                );
+                for configuration in ["Release", "Debug"] {
+                    for framework in ["net10.0-windows", "net8.0-windows"] {
+                        push_candidate(
+                            search_root
+                                .join("src")
+                                .join("TerminalWindowManager.ConPTYHost")
+                                .join("bin")
+                                .join(configuration)
+                                .join(framework)
+                                .join("TerminalWindowManager.ConPTYHost.exe"),
+                        );
+                        push_candidate(
+                            search_root
+                                .join("TerminalWindowManager.ConPTYHost")
+                                .join("bin")
+                                .join(configuration)
+                                .join(framework)
+                                .join("TerminalWindowManager.ConPTYHost.exe"),
+                        );
+                    }
+                }
+                push_candidate(
+                    search_root
+                        .join("TerminalWindowManager.ConPTYHost")
                         .join("TerminalWindowManager.ConPTYHost.exe"),
                 );
             }

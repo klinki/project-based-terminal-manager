@@ -33,3 +33,5 @@
 - `src/TerminalWindowManager.ElectroBun/src-tauri/src/backend.rs` resolves the ConPTY helper only from `std::env::current_dir()`-relative paths.
 - Those helper candidates resolve successfully from the repo root, but all fail when evaluated from `src/TerminalWindowManager.ElectroBun/src-tauri` or packaged bundle directories.
 - The Tauri build already bundles `TerminalWindowManager.ConPTYHost.exe` under `src/TerminalWindowManager.ElectroBun/src-tauri/resources/TerminalWindowManager.ConPTYHost`, but the backend does not currently consult Tauri resource paths when resolving the executable.
+- `src/TerminalWindowManager.ElectroBun/package.json` runs `bun run build:host && bun run tauri dev` for `npm run start`, which builds the helper in Debug directly under `src/TerminalWindowManager.ConPTYHost/bin/Debug/net10.0-windows`.
+- The current Tauri error output confirms that when launched via `npm run start`, the resolver searches from `src/TerminalWindowManager.ElectroBun/src-tauri` but never climbs far enough back to the repo root to reach `src/TerminalWindowManager.ConPTYHost/bin/Debug/net10.0-windows/TerminalWindowManager.ConPTYHost.exe`.
