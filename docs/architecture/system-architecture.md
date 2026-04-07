@@ -317,6 +317,21 @@ Tauri on the current branch:
 - Relies on Tauri's resource model and desktop bundle structure.
 - Helper staging is handled through Tauri resources plus runtime resolution logic.
 
+### Native Window Integration
+
+In practice, the Tauri alternative currently feels more native on Windows for frameless-window behavior such as:
+
+- Dragging the custom title bar.
+- Snap and maximize gestures when dragging to screen edges.
+- Resize interactions on a borderless window.
+
+The likely reason is architectural as well as implementation-specific:
+
+- Tauri exposes more explicit native window interaction APIs and permissions, and this branch uses that model directly.
+- The ElectroBun alternative relies more on drag-region style behavior plus standard window commands, which is viable but appears less tightly aligned with Windows shell behavior for custom chrome.
+
+This does not make ElectroBun unusable. It does mean that if polished native-feeling frameless-window behavior is a priority, the Tauri host model currently has an advantage in this repository.
+
 ### Team Ergonomics
 
 ElectroBun on `main` is a better fit when:
