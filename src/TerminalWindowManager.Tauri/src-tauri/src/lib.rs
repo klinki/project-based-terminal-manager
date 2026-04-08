@@ -13,7 +13,10 @@ fn get_initial_state(manager: State<'_, SessionManager>) -> Result<models::AppSt
 }
 
 #[tauri::command]
-fn create_project(manager: State<'_, SessionManager>, name: String) -> Result<models::AppState, String> {
+fn create_project(
+    manager: State<'_, SessionManager>,
+    name: String,
+) -> Result<models::AppState, String> {
     manager.create_project(name)
 }
 
@@ -27,7 +30,10 @@ fn rename_project(
 }
 
 #[tauri::command]
-fn delete_project(manager: State<'_, SessionManager>, project_id: String) -> Result<models::AppState, String> {
+fn delete_project(
+    manager: State<'_, SessionManager>,
+    project_id: String,
+) -> Result<models::AppState, String> {
     manager.delete_project(project_id)
 }
 
@@ -108,6 +114,15 @@ fn update_defaults(
 }
 
 #[tauri::command]
+fn set_project_default_cwd(
+    manager: State<'_, SessionManager>,
+    project_id: String,
+    cwd: String,
+) -> Result<models::AppState, String> {
+    manager.set_project_default_cwd(project_id, cwd)
+}
+
+#[tauri::command]
 fn window_minimize(window: WebviewWindow) -> Result<serde_json::Value, String> {
     window.minimize().map_err(|error| error.to_string())?;
     Ok(serde_json::json!({ "ok": true }))
@@ -131,7 +146,10 @@ fn stop_all_sessions(manager: State<'_, SessionManager>) -> Result<serde_json::V
 }
 
 #[tauri::command]
-fn window_close(manager: State<'_, SessionManager>, window: WebviewWindow) -> Result<serde_json::Value, String> {
+fn window_close(
+    manager: State<'_, SessionManager>,
+    window: WebviewWindow,
+) -> Result<serde_json::Value, String> {
     manager.stop_all_sessions()?;
     window.close().map_err(|error| error.to_string())?;
     Ok(serde_json::json!({ "ok": true }))
@@ -167,6 +185,7 @@ pub fn run() {
             resize_terminal,
             restart_terminal,
             update_defaults,
+            set_project_default_cwd,
             window_minimize,
             window_maximize,
             stop_all_sessions,
@@ -175,4 +194,3 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running Tauri application");
 }
-

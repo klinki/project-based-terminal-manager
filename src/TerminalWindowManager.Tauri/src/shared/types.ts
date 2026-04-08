@@ -24,6 +24,7 @@ export interface ProjectRecord {
 	id: string;
 	name: string;
 	createdAt: string;
+	defaultCwd: string | null;
 }
 
 export interface TerminalCommandFailure {
@@ -157,6 +158,10 @@ export type TerminalManagerRpc = {
 			updateDefaults: (params: {
 				defaultCwd: string;
 				defaultShell: string;
+			}) => Promise<AppState>;
+			setProjectDefaultCwd: (params: {
+				projectId: string;
+				cwd: string;
 			}) => Promise<AppState>;
 			windowMinimize: (params: Record<string, never>) => Promise<{ ok: boolean }>;
 			windowMaximize: (params: Record<string, never>) => Promise<{ ok: boolean }>;

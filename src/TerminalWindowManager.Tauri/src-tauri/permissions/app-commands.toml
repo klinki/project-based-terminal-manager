@@ -18,4 +18,5 @@ commands.allow = [
   "window_close",
   "stop_all_sessions",
   "update_defaults",
+  "set_project_default_cwd",
 ]

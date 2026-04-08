@@ -13,20 +13,12 @@ use serde_json::Value;
 use tauri::{path::BaseDirectory, AppHandle, Emitter, Manager};
 
 use crate::diagnostics::{
-    append_output_chunk,
-    create_power_shell_bootstrap_script,
-    create_recent_output_excerpt,
-    create_session_diagnostics_paths,
-    SessionDiagnosticsPaths,
+    append_output_chunk, create_power_shell_bootstrap_script, create_recent_output_excerpt,
+    create_session_diagnostics_paths, SessionDiagnosticsPaths,
 };
 use crate::models::{
-    AppState,
-    ProjectRecord,
-    TerminalActivity,
-    TerminalActivityPhase,
-    TerminalRecord,
-    TerminalSessionFailure,
-    TerminalStatus,
+    AppState, ProjectRecord, TerminalActivity, TerminalActivityPhase, TerminalCommandFailure,
+    TerminalRecord, TerminalSessionFailure, TerminalStatus,
 };
 
 const INPUT_SETTLE_MS: u64 = 1100;
@@ -48,7 +40,8 @@ impl AppStateStore {
             return Ok(AppState::create_initial());
         }
 
-        let raw_json = fs::read_to_string(&self.metadata_path).map_err(|error| error.to_string())?;
+        let raw_json =
+            fs::read_to_string(&self.metadata_path).map_err(|error| error.to_string())?;
         let mut state = serde_json::from_str::<AppState>(&raw_json)
             .unwrap_or_else(|_| AppState::create_initial());
         state.normalize_loaded_state();
@@ -124,6 +117,7 @@ impl SessionManager {
                 id: new_uuid_string(),
                 name: trimmed_name.to_string(),
                 created_at: now_iso_string(),
+                default_cwd: None,
             });
         }
 
@@ -166,10 +160,19 @@ impl SessionManager {
         {
             let mut state = self.state.lock().map_err(|error| error.to_string())?;
             state.projects.retain(|project| project.id != project_id);
-            state.terminals.retain(|terminal| terminal.project_id != project_id);
-            if state.active_terminal_id.as_ref().is_some_and(|active_terminal_id| {
-                !state.terminals.iter().any(|terminal| terminal.id == *active_terminal_id)
-            }) {
+            state
+                .terminals
+                .retain(|terminal| terminal.project_id != project_id);
+            if state
+                .active_terminal_id
+                .as_ref()
+                .is_some_and(|active_terminal_id| {
+                    !state
+                        .terminals
+                        .iter()
+                        .any(|terminal| terminal.id == *active_terminal_id)
+                })
+            {
                 state.active_terminal_id = None;
             }
         }
@@ -186,18 +189,25 @@ impl SessionManager {
         shell: Option<String>,
     ) -> Result<AppState, String> {
         let trimmed_name = name.trim();
-        let trimmed_cwd = cwd.trim();
         if trimmed_name.is_empty() {
             return Err("Terminal name cannot be empty.".to_string());
         }
-        if trimmed_cwd.is_empty() {
-            return Err("Terminal working directory cannot be empty.".to_string());
-        }
 
-        let (project_id, default_shell) = {
+        let trimmed_cwd = cwd.trim();
+        let (project_id, project_default_cwd, default_cwd, default_shell) = {
             let state = self.state.lock().map_err(|error| error.to_string())?;
             let project = Self::find_project(&state, &project_id)?;
-            (project.id.clone(), state.defaults.default_shell.clone())
+            (
+                project.id.clone(),
+                project.default_cwd.clone(),
+                state.defaults.default_cwd.clone(),
+                state.defaults.default_shell.clone(),
+            )
+        };
+        let resolved_cwd = if trimmed_cwd.is_empty() {
+            project_default_cwd.unwrap_or(default_cwd)
+        } else {
+            trimmed_cwd.to_string()
         };
 
         {
@@ -206,7 +216,7 @@ impl SessionManager {
                 id: new_uuid_string(),
                 project_id,
                 name: trimmed_name.to_string(),
-                cwd: trimmed_cwd.to_string(),
+                cwd: resolved_cwd,
                 shell: shell
                     .map(|value| value.trim().to_string())
                     .filter(|value| !value.is_empty())
@@ -220,6 +230,26 @@ impl SessionManager {
                 last_command_failure: None,
                 last_session_failure: None,
             });
+        }
+
+        self.persist_and_emit_state()?;
+        Ok(self.snapshot_state())
+    }
+
+    pub fn set_project_default_cwd(
+        &self,
+        project_id: String,
+        cwd: String,
+    ) -> Result<AppState, String> {
+        let trimmed_cwd = cwd.trim();
+        if trimmed_cwd.is_empty() {
+            return Err("Project default working directory cannot be empty.".to_string());
+        }
+
+        {
+            let mut state = self.state.lock().map_err(|error| error.to_string())?;
+            let project = Self::find_project_mut(&mut state, &project_id)?;
+            project.default_cwd = Some(trimmed_cwd.to_string());
         }
 
         self.persist_and_emit_state()?;
@@ -247,7 +277,9 @@ impl SessionManager {
 
         {
             let mut state = self.state.lock().map_err(|error| error.to_string())?;
-            state.terminals.retain(|terminal| terminal.id != terminal_id);
+            state
+                .terminals
+                .retain(|terminal| terminal.id != terminal_id);
             if state.active_terminal_id.as_ref() == Some(&terminal_id) {
                 state.active_terminal_id = None;
             }
@@ -302,7 +334,9 @@ impl SessionManager {
         {
             let mut stdin = stdin.lock().map_err(|error| error.to_string())?;
             stdin
-                .write_all(format!("{}\n", serde_json::json!({"type": "input", "data": data})).as_bytes())
+                .write_all(
+                    format!("{}\n", serde_json::json!({"type": "input", "data": data})).as_bytes(),
+                )
                 .map_err(|error| error.to_string())?;
             stdin.flush().map_err(|error| error.to_string())?;
         }
@@ -310,7 +344,12 @@ impl SessionManager {
         Ok(serde_json::json!({ "ok": true }))
     }
 
-    pub fn resize_terminal(&self, terminal_id: String, cols: u32, rows: u32) -> Result<Value, String> {
+    pub fn resize_terminal(
+        &self,
+        terminal_id: String,
+        cols: u32,
+        rows: u32,
+    ) -> Result<Value, String> {
         let session = self.get_session(&terminal_id)?;
         let stdin = {
             let session_guard = session.lock().map_err(|error| error.to_string())?;
@@ -425,22 +464,34 @@ impl SessionManager {
                     .terminals
                     .iter()
                     .find(|terminal| terminal.id == terminal_id)
-                    .map(|terminal| !matches!(terminal.status, TerminalStatus::Exited | TerminalStatus::Error))
+                    .map(|terminal| {
+                        !matches!(
+                            terminal.status,
+                            TerminalStatus::Exited | TerminalStatus::Error
+                        )
+                    })
                     .unwrap_or(false)
             };
 
             if should_resize {
-                return self.resize_terminal(terminal_id.to_string(), cols, rows).map(|_| ());
+                return self
+                    .resize_terminal(terminal_id.to_string(), cols, rows)
+                    .map(|_| ());
             }
         }
         let terminal_snapshot = {
             let mut state = self.state.lock().map_err(|error| error.to_string())?;
             let terminal = Self::find_terminal_mut(&mut state, terminal_id)?;
             let session_id = new_uuid_string();
-            let diagnostics_paths = create_session_diagnostics_paths(&self.app_data_dir, terminal_id, &session_id)
-                .map_err(|error| error.to_string())?;
+            let diagnostics_paths =
+                create_session_diagnostics_paths(&self.app_data_dir, terminal_id, &session_id)
+                    .map_err(|error| error.to_string())?;
             let power_shell_bootstrap_path = if self.is_power_shell_shell(&terminal.shell) {
-                let script = create_power_shell_bootstrap_script(terminal_id, &session_id, &diagnostics_paths.events_path);
+                let script = create_power_shell_bootstrap_script(
+                    terminal_id,
+                    &session_id,
+                    &diagnostics_paths.events_path,
+                );
                 fs::write(&diagnostics_paths.power_shell_bootstrap_path, script)
                     .map_err(|error| error.to_string())?;
                 Some(diagnostics_paths.power_shell_bootstrap_path.clone())
@@ -452,7 +503,8 @@ impl SessionManager {
             terminal.activity = TerminalActivity::for_status(TerminalStatus::Starting);
             terminal.last_started_at = Some(now_iso_string());
             terminal.last_exit_code = None;
-            terminal.diagnostic_log_path = Some(diagnostics_paths.events_path.display().to_string());
+            terminal.diagnostic_log_path =
+                Some(diagnostics_paths.events_path.display().to_string());
             terminal.last_command_failure = None;
             terminal.last_session_failure = None;
 
@@ -482,7 +534,12 @@ impl SessionManager {
             }
         }
     }
-    fn spawn_session(&self, context: TerminalLaunchContext, cols: u32, rows: u32) -> Result<(), String> {
+    fn spawn_session(
+        &self,
+        context: TerminalLaunchContext,
+        cols: u32,
+        rows: u32,
+    ) -> Result<(), String> {
         if !self.helper_path.exists() {
             return Err(format!(
                 "ConPTY host executable was not found. Checked: {}",
@@ -515,7 +572,10 @@ impl SessionManager {
             ]);
 
         if let Some(power_shell_bootstrap_path) = &context.power_shell_bootstrap_path {
-            command.args(["--powershell-bootstrap", &power_shell_bootstrap_path.display().to_string()]);
+            command.args([
+                "--powershell-bootstrap",
+                &power_shell_bootstrap_path.display().to_string(),
+            ]);
         }
 
         #[cfg(windows)]
@@ -592,8 +652,10 @@ impl SessionManager {
                 match line {
                     Ok(line) => {
                         if let Ok(mut session) = live_session_for_stderr.lock() {
-                            let mut helper_stderr_lines = std::mem::take(&mut session.helper_stderr_lines);
-                            let mut pending_helper_stderr_line = std::mem::take(&mut session.pending_helper_stderr_line);
+                            let mut helper_stderr_lines =
+                                std::mem::take(&mut session.helper_stderr_lines);
+                            let mut pending_helper_stderr_line =
+                                std::mem::take(&mut session.pending_helper_stderr_line);
                             append_output_chunk(
                                 &mut helper_stderr_lines,
                                 &mut pending_helper_stderr_line,
@@ -602,7 +664,8 @@ impl SessionManager {
                             session.helper_stderr_lines = helper_stderr_lines;
                             session.pending_helper_stderr_line = pending_helper_stderr_line;
                             if session.helper_stderr_lines.len() > MAX_HELPER_STDERR_LINES {
-                                let excess = session.helper_stderr_lines.len() - MAX_HELPER_STDERR_LINES;
+                                let excess =
+                                    session.helper_stderr_lines.len() - MAX_HELPER_STDERR_LINES;
                                 session.helper_stderr_lines.drain(0..excess);
                             }
                         }
@@ -620,6 +683,18 @@ impl SessionManager {
         let terminal_for_exit = context.terminal.clone();
         thread::spawn(move || {
             manager_for_exit.watch_child_exit(live_session_for_exit, terminal_for_exit);
+        });
+
+        let manager_for_diagnostics = self.clone();
+        let live_session_for_diagnostics = live_session.clone();
+        let terminal_for_diagnostics = context.terminal.clone();
+        let events_path_for_diagnostics = context.diagnostics_paths.events_path.clone();
+        thread::spawn(move || {
+            manager_for_diagnostics.watch_session_diagnostics(
+                live_session_for_diagnostics,
+                terminal_for_diagnostics,
+                events_path_for_diagnostics,
+            );
         });
 
         Ok(())
@@ -678,17 +753,65 @@ impl SessionManager {
         }
     }
 
+    fn watch_session_diagnostics(
+        &self,
+        live_session: Arc<Mutex<LiveSession>>,
+        terminal: TerminalRecord,
+        events_path: PathBuf,
+    ) {
+        let mut diagnostics_read_offset = 0usize;
+        let mut pending_diagnostics_line = String::new();
+
+        loop {
+            let (closed, stopped, received_exit, received_error) = {
+                let session = match live_session.lock() {
+                    Ok(session) => session,
+                    Err(error) => {
+                        eprintln!("Failed to lock live session diagnostics: {}", error);
+                        return;
+                    }
+                };
+                (
+                    session.closed,
+                    session.is_stopping,
+                    session.received_exit_event,
+                    session.received_error_event,
+                )
+            };
+
+            let _ = self.read_session_diagnostics_events(
+                &terminal,
+                &live_session,
+                &events_path,
+                &mut diagnostics_read_offset,
+                &mut pending_diagnostics_line,
+            );
+
+            if closed || stopped || received_exit || received_error {
+                return;
+            }
+
+            thread::sleep(Duration::from_millis(250));
+        }
+    }
+
     fn handle_helper_line(
         &self,
         terminal: &TerminalRecord,
         live_session: &Arc<Mutex<LiveSession>>,
         line: &str,
     ) -> Result<(), String> {
-        let payload = serde_json::from_str::<HelperEvent>(line)
-            .map_err(|error| format!("The ConPTY helper emitted invalid JSON: {} ({})", line, error))?;
+        let payload = serde_json::from_str::<HelperEvent>(line).map_err(|error| {
+            format!(
+                "The ConPTY helper emitted invalid JSON: {} ({})",
+                line, error
+            )
+        })?;
 
         match payload {
-            HelperEvent::Started(event) => self.handle_helper_started(terminal, live_session, event),
+            HelperEvent::Started(event) => {
+                self.handle_helper_started(terminal, live_session, event)
+            }
             HelperEvent::Output(event) => self.handle_helper_output(terminal, live_session, event),
             HelperEvent::Exit(event) => self.handle_helper_exit(terminal, live_session, event),
             HelperEvent::Error(event) => self.handle_helper_error(terminal, live_session, event),
@@ -708,7 +831,11 @@ impl SessionManager {
 
         {
             let mut state = self.state.lock().map_err(|error| error.to_string())?;
-            if let Some(record) = state.terminals.iter_mut().find(|candidate| candidate.id == terminal.id) {
+            if let Some(record) = state
+                .terminals
+                .iter_mut()
+                .find(|candidate| candidate.id == terminal.id)
+            {
                 record.status = TerminalStatus::Running;
                 record.diagnostic_log_path = Some(event.diagnostic_log_path.clone());
                 record.activity = TerminalActivity::for_status(TerminalStatus::Running);
@@ -716,14 +843,17 @@ impl SessionManager {
         }
 
         self.persist_and_emit_state()?;
-        self.emit_event("terminal-started", serde_json::json!({
-            "terminalId": terminal.id,
-            "sessionId": event.session_id,
-            "shellPid": event.shell_pid,
-            "shellPath": event.shell_path,
-            "diagnosticLogPath": event.diagnostic_log_path,
-            "startedAt": event.started_at,
-        }));
+        self.emit_event(
+            "terminal-started",
+            serde_json::json!({
+                "terminalId": terminal.id,
+                "sessionId": event.session_id,
+                "shellPid": event.shell_pid,
+                "shellPath": event.shell_path,
+                "diagnosticLogPath": event.diagnostic_log_path,
+                "startedAt": event.started_at,
+            }),
+        );
         Ok(())
     }
 
@@ -792,7 +922,11 @@ impl SessionManager {
 
         {
             let mut state = self.state.lock().map_err(|error| error.to_string())?;
-            if let Some(record) = state.terminals.iter_mut().find(|candidate| candidate.id == terminal.id) {
+            if let Some(record) = state
+                .terminals
+                .iter_mut()
+                .find(|candidate| candidate.id == terminal.id)
+            {
                 record.status = TerminalStatus::Exited;
                 record.activity = TerminalActivity::for_status(TerminalStatus::Exited);
                 record.last_exit_code = event.exit_code;
@@ -859,14 +993,21 @@ impl SessionManager {
 
         {
             let mut state = self.state.lock().map_err(|error| error.to_string())?;
-            if let Some(record) = state.terminals.iter_mut().find(|candidate| candidate.id == terminal.id) {
+            if let Some(record) = state
+                .terminals
+                .iter_mut()
+                .find(|candidate| candidate.id == terminal.id)
+            {
                 record.status = TerminalStatus::Error;
                 record.last_session_failure = Some(TerminalSessionFailure {
                     session_id: event.session_id.clone().unwrap_or_else(new_uuid_string),
                     timestamp: event.occurred_at.clone(),
                     exit_code: None,
                     message: event.message.clone(),
-                    shell_path: event.shell_path.clone().unwrap_or_else(|| terminal.shell.clone()),
+                    shell_path: event
+                        .shell_path
+                        .clone()
+                        .unwrap_or_else(|| terminal.shell.clone()),
                     shell_pid: event.shell_pid,
                     stderr_excerpt: stderr_excerpt.clone(),
                     recent_output_excerpt: recent_output_excerpt.clone(),
@@ -877,7 +1018,11 @@ impl SessionManager {
                 record.activity = TerminalActivity {
                     phase: TerminalActivityPhase::Attention,
                     summary: "Session error".to_string(),
-                    detail: self.describe_session_error(&event, stderr_excerpt.clone(), recent_output_excerpt.clone()),
+                    detail: self.describe_session_error(
+                        &event,
+                        stderr_excerpt.clone(),
+                        recent_output_excerpt.clone(),
+                    ),
                     progress: 100,
                     is_indeterminate: false,
                     updated_at: now_iso_string(),
@@ -939,7 +1084,9 @@ impl SessionManager {
                 live_session,
                 HelperErrorEvent {
                     session_id: Some(session_id),
-                    message: "The ConPTY helper exited before the shell reported a successful startup.".to_string(),
+                    message:
+                        "The ConPTY helper exited before the shell reported a successful startup."
+                            .to_string(),
                     diagnostic_log_path: terminal.diagnostic_log_path.clone(),
                     exception_type: Some("HelperStartupExit".to_string()),
                     hresult: None,
@@ -974,6 +1121,169 @@ impl SessionManager {
             },
         )
     }
+
+    fn read_session_diagnostics_events(
+        &self,
+        terminal: &TerminalRecord,
+        live_session: &Arc<Mutex<LiveSession>>,
+        events_path: &Path,
+        diagnostics_read_offset: &mut usize,
+        pending_diagnostics_line: &mut String,
+    ) -> Result<(), String> {
+        let buffer = match fs::read(events_path) {
+            Ok(buffer) => buffer,
+            Err(_) => return Ok(()),
+        };
+
+        if buffer.len() < *diagnostics_read_offset {
+            *diagnostics_read_offset = 0;
+            pending_diagnostics_line.clear();
+        }
+
+        let next_buffer = &buffer[*diagnostics_read_offset..];
+        *diagnostics_read_offset = buffer.len();
+        if next_buffer.is_empty() {
+            return Ok(());
+        }
+
+        let text = format!(
+            "{}{}",
+            pending_diagnostics_line,
+            String::from_utf8_lossy(next_buffer)
+        );
+        let mut lines = text
+            .split('\n')
+            .map(ToString::to_string)
+            .collect::<Vec<String>>();
+        *pending_diagnostics_line = lines.pop().unwrap_or_default();
+
+        for raw_line in lines {
+            let line = raw_line.trim();
+            if line.is_empty() {
+                continue;
+            }
+
+            let payload = match serde_json::from_str::<DiagnosticEvent>(line) {
+                Ok(payload) => payload,
+                Err(_) => continue,
+            };
+
+            self.handle_diagnostic_event(terminal, live_session, payload)?;
+        }
+
+        Ok(())
+    }
+
+    fn handle_diagnostic_event(
+        &self,
+        terminal: &TerminalRecord,
+        live_session: &Arc<Mutex<LiveSession>>,
+        payload: DiagnosticEvent,
+    ) -> Result<(), String> {
+        match payload {
+            DiagnosticEvent::CommandFailed(event) => {
+                self.handle_command_failure_event(terminal, live_session, event)
+            }
+            DiagnosticEvent::CwdChanged(event) => {
+                self.handle_cwd_changed_event(terminal, live_session, event)
+            }
+        }
+    }
+
+    fn handle_command_failure_event(
+        &self,
+        terminal: &TerminalRecord,
+        live_session: &Arc<Mutex<LiveSession>>,
+        event: CommandFailureEvent,
+    ) -> Result<(), String> {
+        if event.terminal_id != terminal.id {
+            return Ok(());
+        }
+
+        let session_id = {
+            let session = live_session.lock().map_err(|error| error.to_string())?;
+            session.session_id.clone()
+        };
+        if event.session_id != session_id {
+            return Ok(());
+        }
+
+        let failure = TerminalCommandFailure {
+            session_id: event.session_id,
+            timestamp: event.timestamp,
+            command_text: event.command_text,
+            exit_code: event.exit_code,
+            error_message: event.error_message,
+            cwd: event.cwd,
+            recent_output_excerpt: self.get_recent_output_excerpt(live_session),
+        };
+
+        {
+            let mut state = self.state.lock().map_err(|error| error.to_string())?;
+            if let Some(record) = state
+                .terminals
+                .iter_mut()
+                .find(|candidate| candidate.id == terminal.id)
+            {
+                record.last_command_failure = Some(failure.clone());
+            }
+        }
+
+        self.persist_and_emit_state()?;
+        self.emit_event(
+            "terminal-diagnostic-notice",
+            serde_json::json!({
+                "terminalId": terminal.id,
+                "message": self.create_diagnostic_notice_message(&failure),
+            }),
+        );
+        Ok(())
+    }
+
+    fn handle_cwd_changed_event(
+        &self,
+        terminal: &TerminalRecord,
+        live_session: &Arc<Mutex<LiveSession>>,
+        event: CwdChangedEvent,
+    ) -> Result<(), String> {
+        if event.terminal_id != terminal.id {
+            return Ok(());
+        }
+
+        let session_id = {
+            let session = live_session.lock().map_err(|error| error.to_string())?;
+            session.session_id.clone()
+        };
+        if event.session_id != session_id {
+            return Ok(());
+        }
+
+        let trimmed_cwd = event.cwd.trim();
+        if trimmed_cwd.is_empty() {
+            return Ok(());
+        }
+
+        let mut changed = false;
+        {
+            let mut state = self.state.lock().map_err(|error| error.to_string())?;
+            if let Some(record) = state
+                .terminals
+                .iter_mut()
+                .find(|candidate| candidate.id == terminal.id)
+            {
+                if record.cwd != trimmed_cwd {
+                    record.cwd = trimmed_cwd.to_string();
+                    changed = true;
+                }
+            }
+        }
+
+        if changed {
+            self.persist_and_emit_state()?;
+        }
+
+        Ok(())
+    }
     fn capture_shell_output(&self, session: &mut LiveSession, data_base64: &str) {
         let chunk_text = base64::engine::general_purpose::STANDARD
             .decode(data_base64)
@@ -996,7 +1306,10 @@ impl SessionManager {
     }
 
     fn get_helper_stderr_excerpt_locked(&self, session: &LiveSession) -> Option<String> {
-        let excerpt = create_recent_output_excerpt(&session.helper_stderr_lines, &session.pending_helper_stderr_line);
+        let excerpt = create_recent_output_excerpt(
+            &session.helper_stderr_lines,
+            &session.pending_helper_stderr_line,
+        );
         if excerpt.trim().is_empty() {
             None
         } else {
@@ -1016,7 +1329,11 @@ impl SessionManager {
         let mut changed = false;
         {
             let mut state = self.state.lock().map_err(|error| error.to_string())?;
-            if let Some(terminal) = state.terminals.iter_mut().find(|candidate| candidate.id == terminal_id) {
+            if let Some(terminal) = state
+                .terminals
+                .iter_mut()
+                .find(|candidate| candidate.id == terminal_id)
+            {
                 let next = TerminalActivity {
                     phase,
                     summary,
@@ -1081,7 +1398,14 @@ impl SessionManager {
                 return;
             }
 
-            let _ = manager.update_terminal_activity(&terminal_id, phase, summary, detail, progress, is_indeterminate);
+            let _ = manager.update_terminal_activity(
+                &terminal_id,
+                phase,
+                summary,
+                detail,
+                progress,
+                is_indeterminate,
+            );
         });
     }
 
@@ -1224,7 +1548,11 @@ impl SessionManager {
     ) -> Result<(), String> {
         {
             let mut state = self.state.lock().map_err(|error| error.to_string())?;
-            if let Some(record) = state.terminals.iter_mut().find(|candidate| candidate.id == terminal.id) {
+            if let Some(record) = state
+                .terminals
+                .iter_mut()
+                .find(|candidate| candidate.id == terminal.id)
+            {
                 record.status = TerminalStatus::Error;
                 record.last_session_failure = Some(TerminalSessionFailure {
                     session_id: session_id.to_string(),
@@ -1267,7 +1595,10 @@ impl SessionManager {
         Ok(())
     }
 
-    fn find_project<'a>(state: &'a AppState, project_id: &str) -> Result<&'a ProjectRecord, String> {
+    fn find_project<'a>(
+        state: &'a AppState,
+        project_id: &str,
+    ) -> Result<&'a ProjectRecord, String> {
         state
             .projects
             .iter()
@@ -1275,7 +1606,10 @@ impl SessionManager {
             .ok_or_else(|| format!("Project '{}' was not found.", project_id))
     }
 
-    fn find_project_mut<'a>(state: &'a mut AppState, project_id: &str) -> Result<&'a mut ProjectRecord, String> {
+    fn find_project_mut<'a>(
+        state: &'a mut AppState,
+        project_id: &str,
+    ) -> Result<&'a mut ProjectRecord, String> {
         state
             .projects
             .iter_mut()
@@ -1283,7 +1617,10 @@ impl SessionManager {
             .ok_or_else(|| format!("Project '{}' was not found.", project_id))
     }
 
-    fn find_terminal_mut<'a>(state: &'a mut AppState, terminal_id: &str) -> Result<&'a mut TerminalRecord, String> {
+    fn find_terminal_mut<'a>(
+        state: &'a mut AppState,
+        terminal_id: &str,
+    ) -> Result<&'a mut TerminalRecord, String> {
         state
             .terminals
             .iter_mut()
@@ -1330,6 +1667,33 @@ impl SessionManager {
         details.join(" ")
     }
 
+    fn create_diagnostic_notice_message(&self, failure: &TerminalCommandFailure) -> String {
+        let exit_code_text = failure
+            .exit_code
+            .map(|code| format!("exit {}", code))
+            .unwrap_or_else(|| "unknown exit code".to_string());
+        let command_text = failure
+            .command_text
+            .split_whitespace()
+            .collect::<Vec<&str>>()
+            .join(" ");
+        let summary = if command_text.chars().count() > 96 {
+            format!("{}...", command_text.chars().take(93).collect::<String>())
+        } else {
+            command_text
+        };
+
+        format!(
+            "Command failed ({}): {}",
+            exit_code_text,
+            if summary.is_empty() {
+                "unknown command"
+            } else {
+                &summary
+            }
+        )
+    }
+
     fn is_power_shell_shell(&self, shell: &str) -> bool {
         let normalized = shell.trim().to_lowercase();
         normalized.ends_with("pwsh")
@@ -1337,7 +1701,6 @@ impl SessionManager {
             || normalized.ends_with("powershell")
             || normalized.ends_with("powershell.exe")
     }
-
 }
 #[derive(Debug)]
 struct LiveSession {
@@ -1413,6 +1776,36 @@ struct HelperErrorEvent {
     shell_pid: Option<u32>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+enum DiagnosticEvent {
+    CommandFailed(CommandFailureEvent),
+    CwdChanged(CwdChangedEvent),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CommandFailureEvent {
+    event_id: Option<String>,
+    terminal_id: String,
+    session_id: String,
+    timestamp: String,
+    command_text: String,
+    exit_code: Option<i32>,
+    error_message: Option<String>,
+    cwd: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CwdChangedEvent {
+    event_id: Option<String>,
+    terminal_id: String,
+    session_id: String,
+    timestamp: String,
+    cwd: String,
+}
+
 fn new_uuid_string() -> String {
     uuid::Uuid::new_v4().to_string()
 }
@@ -1436,6 +1829,3 @@ fn describe_input_activity(data: &str) -> (String, String, u32) {
         )
     }
 }
-
-
-

@@ -57,6 +57,8 @@ function createRpcBridge(): TerminalManagerRpc {
 					invoke<AppState>("restart_terminal", { terminalId, cols, rows }),
 				updateDefaults: ({ defaultCwd, defaultShell }) =>
 					invoke<AppState>("update_defaults", { defaultCwd, defaultShell }),
+				setProjectDefaultCwd: ({ projectId, cwd }) =>
+					invoke<AppState>("set_project_default_cwd", { projectId, cwd }),
 				windowMinimize: () => invoke<{ ok: boolean }>("window_minimize"),
 				windowMaximize: () => invoke<{ ok: boolean }>("window_maximize"),
 				windowClose: () => invoke<{ ok: boolean }>("window_close"),

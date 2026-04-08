@@ -9,8 +9,7 @@ pub const MAX_OUTPUT_LINES: usize = 100;
 pub const RECENT_OUTPUT_EXCERPT_LINES: usize = 20;
 
 static ANSI_PATTERN: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
-        .expect("ANSI stripping regex must compile")
+    Regex::new(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])").expect("ANSI stripping regex must compile")
 });
 
 #[derive(Debug, Clone)]
@@ -89,6 +88,7 @@ pub fn create_power_shell_bootstrap_script(
         format!("$script:__twmSessionId = '{}'", session_id),
         format!("$script:__twmEventsPath = '{}'", events_path),
         "$script:__twmLastHistoryId = $null".to_string(),
+        "$script:__twmLastReportedCwd = $null".to_string(),
         String::new(),
         "try {".to_string(),
         "\t$history = Get-History -Count 1 -ErrorAction Stop".to_string(),
@@ -109,6 +109,23 @@ pub fn create_power_shell_bootstrap_script(
         "\t\t$latestHistory = Get-History -Count 1 -ErrorAction Stop".to_string(),
         "\t} catch {".to_string(),
         "\t\t$latestHistory = $null".to_string(),
+        "\t}".to_string(),
+        String::new(),
+        "\t$currentCwd = (Get-Location).Path".to_string(),
+        "\tif ($currentCwd -ne $script:__twmLastReportedCwd) {".to_string(),
+        "\t\t$script:__twmLastReportedCwd = $currentCwd".to_string(),
+        "\t\t$cwdEvent = @{".to_string(),
+        "\t\t\teventId = [guid]::NewGuid().ToString()".to_string(),
+        "\t\t\ttype = 'cwdChanged'".to_string(),
+        "\t\t\tterminalId = $script:__twmTerminalId".to_string(),
+        "\t\t\tsessionId = $script:__twmSessionId".to_string(),
+        "\t\t\ttimestamp = [DateTimeOffset]::UtcNow.ToString('o')".to_string(),
+        "\t\t\tcwd = $currentCwd".to_string(),
+        "\t\t}".to_string(),
+        String::new(),
+        "\t\t$cwdJson = $cwdEvent | ConvertTo-Json -Compress -Depth 5".to_string(),
+        "\t\t$encoding = [System.Text.UTF8Encoding]::new($false)".to_string(),
+        "\t\t[System.IO.File]::AppendAllText($script:__twmEventsPath, $cwdJson + [Environment]::NewLine, $encoding)".to_string(),
         "\t}".to_string(),
         String::new(),
         "\tif ($latestHistory -and $latestHistory.Id -ne $script:__twmLastHistoryId) {".to_string(),

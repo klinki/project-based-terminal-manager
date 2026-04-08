@@ -54,6 +54,8 @@ pub struct ProjectRecord {
     pub name: String,
     #[serde(default = "now_iso_string")]
     pub created_at: String,
+    #[serde(default)]
+    pub default_cwd: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -165,6 +167,13 @@ impl AppState {
             if project.created_at.trim().is_empty() {
                 project.created_at = now_iso_string();
             }
+            if project
+                .default_cwd
+                .as_ref()
+                .is_some_and(|cwd| cwd.trim().is_empty())
+            {
+                project.default_cwd = None;
+            }
         }
 
         for terminal in &mut self.terminals {
@@ -184,7 +193,10 @@ impl AppState {
                 terminal.created_at = now_iso_string();
             }
 
-            if matches!(terminal.status, TerminalStatus::Running | TerminalStatus::Starting) {
+            if matches!(
+                terminal.status,
+                TerminalStatus::Running | TerminalStatus::Starting
+            ) {
                 terminal.status = TerminalStatus::Stopped;
             }
             terminal.activity = TerminalActivity::for_status(terminal.status);

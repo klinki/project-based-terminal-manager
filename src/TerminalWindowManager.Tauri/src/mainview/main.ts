@@ -204,6 +204,17 @@ app.innerHTML = `
 					</div>
 					<div class="inspector-header-actions">
 						<span id="activity-chip" class="activity-chip idle">Idle</span>
+						<button
+							id="set-project-default-cwd"
+							class="icon-button"
+							disabled
+							title="Use current console directory as the project default">
+							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+								<path d="M3 7h5l2 2h11v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+								<path d="M12 11v6"></path>
+								<path d="m9.5 14.5 2.5 2.5 2.5-2.5"></path>
+							</svg>
+						</button>
 						<button id="restart-terminal" class="icon-button" disabled title="Restart console">
 							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 								<polyline points="23 4 23 10 17 10"></polyline>
@@ -313,6 +324,8 @@ const activityChip = queryHtmlElement<HTMLElement>("activity-chip");
 const activityUpdated = queryHtmlElement<HTMLElement>("activity-updated");
 const restartTerminalButton =
 	queryHtmlElement<HTMLButtonElement>("restart-terminal");
+const setProjectDefaultCwdButton =
+	queryHtmlElement<HTMLButtonElement>("set-project-default-cwd");
 const inspectorPanel = queryHtmlElement<HTMLElement>("inspector-panel");
 const inspectorBody = queryHtmlElement<HTMLElement>("inspector-body");
 const inspectorToggle = queryHtmlElement<HTMLButtonElement>("inspector-toggle");
@@ -602,6 +615,13 @@ restartTerminalButton.addEventListener("click", async () => {
 	renderInspector();
 	renderStatusBoard();
 	setStatus(`Restarted '${selectedTerminal.name}'.`);
+});
+
+setProjectDefaultCwdButton.addEventListener("click", () => {
+	void runUiAction(
+		"Set project default directory",
+		setProjectDefaultCwdFromSelectedTerminal,
+	);
 });
 
 window.addEventListener("resize", () => {
@@ -1177,7 +1197,7 @@ async function createConsoleFromProject(projectId: string): Promise<void> {
 	state = await getRendererRpc().proxy.request.createTerminal({
 		projectId: project.id,
 		name,
-		cwd: state.defaults.defaultCwd,
+		cwd: project.defaultCwd ?? state.defaults.defaultCwd,
 		shell: state.defaults.defaultShell,
 	});
 
@@ -1188,6 +1208,32 @@ async function createConsoleFromProject(projectId: string): Promise<void> {
 
 	await selectTerminal(terminal.id);
 	setStatus(`Created '${terminal.name}' in '${project.name}'. The console is ready for input.`);
+}
+
+async function setProjectDefaultCwdFromSelectedTerminal(): Promise<void> {
+	const selectedTerminal = getSelectedTerminal();
+	if (!selectedTerminal) {
+		return;
+	}
+
+	const project = findProject(selectedTerminal.projectId);
+	if (!project) {
+		return;
+	}
+
+	const trimmedCwd = selectedTerminal.cwd.trim();
+	if (!trimmedCwd) {
+		throw new Error("The selected console does not have a working directory to save.");
+	}
+
+	state = await getRendererRpc().proxy.request.setProjectDefaultCwd({
+		projectId: project.id,
+		cwd: trimmedCwd,
+	});
+	renderTree();
+	renderInspector();
+	renderStatusBoard();
+	setStatus(`New consoles in '${project.name}' will start in '${trimmedCwd}'.`);
 }
 
 async function openSettingsDialog(): Promise<void> {
@@ -1400,6 +1446,8 @@ function renderInspector(): void {
 			<dd>${escapeHtml(selectedTerminal.cwd)}</dd>
 			<dt>Shell</dt>
 			<dd>${escapeHtml(selectedTerminal.shell)}</dd>
+			<dt>Project default directory</dt>
+			<dd>${escapeHtml(findProject(selectedTerminal.projectId)?.defaultCwd ?? "Uses global default")}</dd>
 			<dt>Activity</dt>
 			<dd>${escapeHtml(selectedTerminal.activity.detail)}</dd>
 			<dt>Last started</dt>
@@ -1422,6 +1470,7 @@ function renderInspector(): void {
 			<dd class="metadata-wrap">${renderOptionalCodeBlock(selectedTerminal.diagnosticLogPath)}</dd>
 		`;
 		restartTerminalButton.disabled = false;
+		setProjectDefaultCwdButton.disabled = !selectedTerminal.cwd.trim();
 		terminalEmpty.style.display = terminalViews.has(selectedTerminal.id)
 			? "none"
 			: "flex";
@@ -1438,12 +1487,15 @@ function renderInspector(): void {
 			<dd>${new Date(selectedProject.createdAt).toLocaleString()}</dd>
 			<dt>Consoles</dt>
 			<dd>${state.terminals.filter((terminal) => terminal.projectId === selectedProject.id).length}</dd>
+			<dt>Default working directory</dt>
+			<dd>${escapeHtml(selectedProject.defaultCwd ?? `Uses global default: ${state.defaults.defaultCwd}`)}</dd>
 			<dt>Rename</dt>
 			<dd>Double-click the project in the sidebar to rename it.</dd>
 			<dt>Persistence</dt>
-			<dd>Projects and console definitions are stored. Live processes are not restored on relaunch.</dd>
+			<dd>Projects and console definitions are stored. Consoles reopen with their last saved working directory, but live processes are not restored on relaunch.</dd>
 		`;
 		restartTerminalButton.disabled = true;
+		setProjectDefaultCwdButton.disabled = true;
 		terminalEmpty.style.display = state.activeTerminalId ? "none" : "flex";
 		return;
 	}
@@ -1453,6 +1505,7 @@ function renderInspector(): void {
 		"Each console leaf becomes a live ConPTY session once activated.";
 	selectionMetadata.innerHTML = "";
 	restartTerminalButton.disabled = true;
+	setProjectDefaultCwdButton.disabled = true;
 	terminalEmpty.style.display = "flex";
 }
 
