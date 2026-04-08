@@ -419,6 +419,7 @@ impl SessionManager {
         &self,
         default_cwd: String,
         default_shell: String,
+        custom_shells: Vec<String>,
     ) -> Result<AppState, String> {
         {
             let mut state = self.state.lock().map_err(|error| error.to_string())?;
@@ -431,6 +432,36 @@ impl SessionManager {
 
             if !trimmed_shell.is_empty() {
                 state.defaults.default_shell = trimmed_shell.to_string();
+            }
+
+            state.defaults.custom_shells = custom_shells
+                .into_iter()
+                .map(|shell| shell.trim().to_string())
+                .filter(|shell| !shell.is_empty())
+                .filter(|shell| !matches!(shell.to_ascii_lowercase().as_str(), "pwsh" | "pwsh.exe" | "cmd" | "cmd.exe"))
+                .fold(Vec::<String>::new(), |mut acc, shell| {
+                    if !acc
+                        .iter()
+                        .any(|existing| existing.eq_ignore_ascii_case(&shell))
+                    {
+                        acc.push(shell);
+                    }
+                    acc
+                });
+
+            let default_shell = state.defaults.default_shell.trim().to_string();
+            if !matches!(
+                default_shell.to_ascii_lowercase().as_str(),
+                "pwsh" | "pwsh.exe" | "cmd" | "cmd.exe"
+            ) && !state
+                .defaults
+                .custom_shells
+                .iter()
+                .any(|shell| {
+                    shell.eq_ignore_ascii_case(&default_shell)
+                })
+            {
+                state.defaults.custom_shells.insert(0, default_shell);
             }
         }
 

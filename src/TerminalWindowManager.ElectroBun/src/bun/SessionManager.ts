@@ -363,6 +363,7 @@ export class SessionManager {
 			payload = JSON.parse(line) as HelperEvent;
 		} catch {
 			await this.emitSessionError(terminal, liveSession, {
+				type: "error",
 				sessionId: liveSession.sessionId,
 				message: `The ConPTY helper emitted invalid JSON: ${line}`,
 				diagnosticLogPath: liveSession.eventsPath,
@@ -438,6 +439,7 @@ export class SessionManager {
 		}
 
 		await this.emitSessionError(terminal, liveSession, {
+			type: "error",
 			sessionId: liveSession.sessionId,
 			message: `The ConPTY helper process failed: ${error.message}`,
 			diagnosticLogPath: liveSession.eventsPath,

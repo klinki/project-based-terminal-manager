@@ -233,7 +233,7 @@ const rpc = BrowserView.defineRPC<TerminalManagerRpc>({
 				return snapshotState();
 			},
 
-			updateDefaults: ({ defaultCwd, defaultShell }) => {
+			updateDefaults: ({ defaultCwd, defaultShell, customShells }) => {
 				const trimmedCwd = defaultCwd.trim();
 				const trimmedShell = defaultShell.trim();
 
@@ -244,6 +244,11 @@ const rpc = BrowserView.defineRPC<TerminalManagerRpc>({
 				if (trimmedShell) {
 					state.defaults.defaultShell = trimmedShell;
 				}
+
+				state.defaults.customShells = normalizeCustomShells(
+					customShells,
+					state.defaults.defaultShell,
+				);
 
 				persistState();
 				return snapshotState();
@@ -566,4 +571,37 @@ function describeCommandFailure(
 	}
 
 	return details.join(" ");
+}
+
+function normalizeCustomShells(
+	customShells: string[],
+	defaultShell: string,
+): string[] {
+	const normalized = new Map<string, string>();
+	const push = (value: string) => {
+		const trimmed = value.trim();
+		if (!trimmed || isBuiltInShell(trimmed)) {
+			return;
+		}
+
+		const key = trimmed.toLowerCase();
+		if (!normalized.has(key)) {
+			normalized.set(key, trimmed);
+		}
+	};
+
+	push(defaultShell);
+	for (const shell of customShells) {
+		push(shell);
+	}
+
+	return [...normalized.values()];
+}
+
+function isBuiltInShell(shell: string): boolean {
+	const normalized = shell.trim().toLowerCase();
+	return normalized === "pwsh" ||
+		normalized === "pwsh.exe" ||
+		normalized === "cmd" ||
+		normalized === "cmd.exe";
 }

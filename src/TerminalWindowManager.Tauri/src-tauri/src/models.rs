@@ -43,6 +43,8 @@ pub struct AppDefaults {
     pub default_cwd: String,
     #[serde(default = "default_shell")]
     pub default_shell: String,
+    #[serde(default)]
+    pub custom_shells: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -156,6 +158,10 @@ impl AppState {
         if self.defaults.default_shell.trim().is_empty() {
             self.defaults.default_shell = default_shell();
         }
+        self.defaults.custom_shells = normalize_custom_shells(
+            std::mem::take(&mut self.defaults.custom_shells),
+            Some(&self.defaults.default_shell),
+        );
 
         for project in &mut self.projects {
             if project.id.trim().is_empty() {
@@ -211,6 +217,7 @@ impl Default for AppDefaults {
         Self {
             default_cwd: default_cwd(),
             default_shell: default_shell(),
+            custom_shells: Vec::new(),
         }
     }
 }
@@ -304,6 +311,41 @@ fn default_shell() -> String {
             .or_else(|_| env::var("COMSPEC"))
             .unwrap_or_else(|_| "sh".to_string())
     }
+}
+
+fn normalize_custom_shells(shells: Vec<String>, current_default_shell: Option<&str>) -> Vec<String> {
+    let mut normalized = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    if let Some(default_shell) = current_default_shell {
+        push_custom_shell(&mut normalized, &mut seen, default_shell);
+    }
+
+    for shell in shells {
+        push_custom_shell(&mut normalized, &mut seen, &shell);
+    }
+
+    normalized
+}
+
+fn push_custom_shell(
+    normalized: &mut Vec<String>,
+    seen: &mut std::collections::HashSet<String>,
+    shell: &str,
+) {
+    let trimmed = shell.trim();
+    if trimmed.is_empty() || is_builtin_shell(trimmed) {
+        return;
+    }
+
+    let key = trimmed.to_ascii_lowercase();
+    if seen.insert(key) {
+        normalized.push(trimmed.to_string());
+    }
+}
+
+fn is_builtin_shell(shell: &str) -> bool {
+    matches!(shell.trim().to_ascii_lowercase().as_str(), "pwsh" | "pwsh.exe" | "cmd" | "cmd.exe")
 }
 
 fn new_uuid_string() -> String {

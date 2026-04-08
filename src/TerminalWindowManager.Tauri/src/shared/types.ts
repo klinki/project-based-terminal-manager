@@ -18,6 +18,7 @@ export interface TerminalActivity {
 export interface AppDefaults {
 	defaultCwd: string;
 	defaultShell: string;
+	customShells: string[];
 }
 
 export interface ProjectRecord {
@@ -118,7 +119,7 @@ export interface TerminalDiagnosticNoticeMessage {
 export type TerminalManagerRpc = {
 	proxy: {
 		request: {
-			getInitialState: () => Promise<AppState>;
+			getInitialState: (params?: Record<string, never>) => Promise<AppState>;
 			createProject: (params: { name: string }) => Promise<AppState>;
 			renameProject: (params: {
 				projectId: string;
@@ -158,6 +159,7 @@ export type TerminalManagerRpc = {
 			updateDefaults: (params: {
 				defaultCwd: string;
 				defaultShell: string;
+				customShells: string[];
 			}) => Promise<AppState>;
 			setProjectDefaultCwd: (params: {
 				projectId: string;
@@ -166,6 +168,7 @@ export type TerminalManagerRpc = {
 			windowMinimize: (params: Record<string, never>) => Promise<{ ok: boolean }>;
 			windowMaximize: (params: Record<string, never>) => Promise<{ ok: boolean }>;
 			windowClose: (params: Record<string, never>) => Promise<{ ok: boolean }>;
+			stopAllSessions: (params?: Record<string, never>) => Promise<{ ok: boolean }>;
 		};
 	};
 };

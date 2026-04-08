@@ -20,6 +20,7 @@ export interface TerminalActivity {
 export interface AppDefaults {
 	defaultCwd: string;
 	defaultShell: string;
+	customShells: string[];
 }
 
 export interface ProjectRecord {
@@ -119,7 +120,7 @@ export interface TerminalDiagnosticNoticeMessage {
 export type TerminalManagerRpc = {
 	bun: RPCSchema<{
 		requests: {
-			getInitialState: { params: {}; response: AppState };
+			getInitialState: { params: Record<string, never>; response: AppState };
 			createProject: { params: { name: string }; response: AppState };
 			renameProject: {
 				params: { projectId: string; name: string };
@@ -163,7 +164,11 @@ export type TerminalManagerRpc = {
 				response: AppState;
 			};
 			updateDefaults: {
-				params: { defaultCwd: string; defaultShell: string };
+				params: {
+					defaultCwd: string;
+					defaultShell: string;
+					customShells: string[];
+				};
 				response: AppState;
 			};
 			windowMinimize: { params: {}; response: { ok: boolean } };

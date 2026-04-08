@@ -48,6 +48,7 @@ export class AppStateStore {
 		return {
 			defaultCwd: process.cwd(),
 			defaultShell: this.getDefaultShell(),
+			customShells: [],
 		};
 	}
 
@@ -56,6 +57,10 @@ export class AppStateStore {
 			...this.createDefaults(),
 			...(parsed.defaults ?? {}),
 		};
+		defaults.customShells = this.normalizeCustomShells(
+			defaults.customShells ?? [],
+			defaults.defaultShell,
+		);
 
 		const terminals = (parsed.terminals ?? []).map((terminal) =>
 			this.normalizeTerminal(terminal),
@@ -112,6 +117,36 @@ export class AppStateStore {
 		}
 
 		return process.env["SHELL"] || process.env["COMSPEC"] || "sh";
+	}
+
+	private normalizeCustomShells(shells: string[], defaultShell: string): string[] {
+		const normalized = new Map<string, string>();
+		const push = (value: string) => {
+			const trimmed = value.trim();
+			if (!trimmed || this.isBuiltInShell(trimmed)) {
+				return;
+			}
+
+			const key = trimmed.toLowerCase();
+			if (!normalized.has(key)) {
+				normalized.set(key, trimmed);
+			}
+		};
+
+		push(defaultShell);
+		for (const shell of shells) {
+			push(shell);
+		}
+
+		return [...normalized.values()];
+	}
+
+	private isBuiltInShell(shell: string): boolean {
+		const normalized = shell.trim().toLowerCase();
+		return normalized === "pwsh" ||
+			normalized === "pwsh.exe" ||
+			normalized === "cmd" ||
+			normalized === "cmd.exe";
 	}
 
 	private createDefaultActivity(status: TerminalRecord["status"]): TerminalActivity {

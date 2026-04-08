@@ -979,6 +979,140 @@ input {
 	gap: 6px;
 }
 
+.settings-shell-combobox {
+	position: relative;
+}
+
+.settings-shell-input-row {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	align-items: center;
+	gap: 8px;
+}
+
+.settings-shell-input {
+	padding-right: 10px;
+}
+
+.settings-shell-toggle {
+	width: 36px;
+	height: 36px;
+	padding: 0;
+	display: grid;
+	place-items: center;
+	background: #1a1a1a;
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	color: var(--muted);
+}
+
+.settings-shell-toggle:hover {
+	background: rgba(255, 255, 255, 0.06);
+	color: var(--text);
+}
+
+.settings-shell-toggle svg {
+	width: 16px;
+	height: 16px;
+}
+
+.settings-shell-menu {
+	position: absolute;
+	top: calc(100% + 6px);
+	left: 0;
+	right: 0;
+	z-index: 20;
+	display: grid;
+	gap: 10px;
+	padding: 10px;
+	border-radius: 8px;
+	border: 1px solid rgba(255, 255, 255, 0.08);
+	background: #131821;
+	box-shadow: var(--shadow);
+}
+
+.settings-shell-menu.hidden {
+	display: none;
+}
+
+.settings-shell-group {
+	display: grid;
+	gap: 6px;
+}
+
+.settings-shell-group-label {
+	font-size: 0.7rem;
+	text-transform: uppercase;
+	letter-spacing: 0.08em;
+	color: var(--muted);
+}
+
+.settings-shell-option-row {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	gap: 6px;
+	align-items: center;
+}
+
+.settings-shell-option {
+	width: 100%;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 10px;
+	padding: 8px 10px;
+	background: rgba(255, 255, 255, 0.02);
+	border: 1px solid rgba(255, 255, 255, 0.05);
+	border-radius: 6px;
+	color: var(--text);
+	text-align: left;
+}
+
+.settings-shell-option:hover {
+	background: rgba(255, 255, 255, 0.07);
+}
+
+.settings-shell-option-value {
+	min-width: 0;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.settings-shell-option-kind {
+	flex-shrink: 0;
+	font-size: 0.68rem;
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+	color: var(--muted);
+}
+
+.settings-shell-remove {
+	width: 32px;
+	height: 32px;
+	padding: 0;
+	display: grid;
+	place-items: center;
+	border-radius: 6px;
+	background: rgba(248, 81, 73, 0.08);
+	border: 1px solid rgba(248, 81, 73, 0.16);
+	color: #ffb8b3;
+}
+
+.settings-shell-remove:hover {
+	background: rgba(248, 81, 73, 0.18);
+}
+
+.settings-shell-empty {
+	padding: 8px 10px;
+	border-radius: 6px;
+	background: rgba(255, 255, 255, 0.02);
+	border: 1px dashed rgba(255, 255, 255, 0.08);
+	color: var(--muted);
+	font-size: 0.76rem;
+	line-height: 1.4;
+}
+
 .settings-label {
 	font-size: 0.78rem;
 	color: var(--muted);
@@ -1018,3 +1152,4 @@ input {
 		grid-template-columns: 1fr;
 	}
 }
+

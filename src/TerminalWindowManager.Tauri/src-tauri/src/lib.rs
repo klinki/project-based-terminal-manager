@@ -109,8 +109,9 @@ fn update_defaults(
     manager: State<'_, SessionManager>,
     default_cwd: String,
     default_shell: String,
+    custom_shells: Vec<String>,
 ) -> Result<models::AppState, String> {
-    manager.update_defaults(default_cwd, default_shell)
+    manager.update_defaults(default_cwd, default_shell, custom_shells)
 }
 
 #[tauri::command]
