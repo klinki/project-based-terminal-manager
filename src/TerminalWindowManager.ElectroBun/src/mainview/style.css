@@ -944,6 +944,7 @@ input {
 	padding: 20px;
 	border-radius: 10px;
 	background: #1a1a1a;
+	color: var(--text);
 	border: 1px solid rgba(255, 255, 255, 0.1);
 	box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
 	display: grid;
@@ -952,6 +953,7 @@ input {
 
 .confirm-dialog-title {
 	margin: 0;
+	color: var(--text);
 	font-size: 1.05rem;
 	font-weight: 700;
 }
