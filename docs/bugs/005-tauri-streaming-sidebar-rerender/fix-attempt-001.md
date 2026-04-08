@@ -1,7 +1,7 @@
 # Fix Attempt 001
 
 ## Attempt Status
-- awaiting_user_confirmation
+- fixed
 
 ## Goal
 - Stop unnecessary sidebar DOM replacement during live output so hover and console switching remain stable.
@@ -33,10 +33,11 @@
 - `bun x tsc --noEmit -p src/TerminalWindowManager.Tauri/tsconfig.json` passed.
 
 ## Outcome
-- Local compilation succeeded and the redundant sidebar redraw path is removed. User confirmation is still required for live interaction behavior.
+- Local compilation succeeded and the redundant sidebar redraw path is removed.
+- User confirmed the live interaction behavior is fixed.
 
 ## Next Step
-- Have the user verify that sidebar hover stays stable and that switching consoles now works while another console is streaming.
+- None.
 
 ## Remaining Gaps
-- Manual app interaction still needs user confirmation.
+- None after user confirmation.

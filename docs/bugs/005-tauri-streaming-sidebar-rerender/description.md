@@ -4,7 +4,7 @@
 Tauri sidebar rerenders during live output and interferes with console switching
 
 ## Status
-- open
+- fixed
 
 ## Reported Symptoms
 - When one console is actively streaming output, clicking another console in the left sidebar does not reliably switch to it.

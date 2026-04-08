@@ -1,7 +1,7 @@
 # Bug Status
 
 ## Current State
-- awaiting_user_confirmation
+- fixed
 
 ## Active Attempt
 - `fix-attempt-002.md`
@@ -10,7 +10,7 @@
 - 2026-04-08
 
 ## Confirmation Date
-- pending
+- 2026-04-08
 
 ## Resolution Summary
 - Replaced the datalist shell field with an editable custom combobox in both UIs and added persisted custom shell history to app defaults.
@@ -28,6 +28,7 @@
 - 2026-04-08: user reported dialog heading colors were unreadable in the dark theme
 - 2026-04-08: fix attempt 002 started
 - 2026-04-08: local verification completed for the dialog heading color fix; awaiting user confirmation
+- 2026-04-08: user confirmed the shell selector and dialog color fixes
 
 ## Notes
 - `bun x tsc --noEmit -p src/TerminalWindowManager.Tauri/tsconfig.json` passed.

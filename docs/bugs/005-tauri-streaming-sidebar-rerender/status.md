@@ -1,7 +1,7 @@
 # Bug Status
 
 ## Current State
-- awaiting_user_confirmation
+- fixed
 
 ## Active Attempt
 - `fix-attempt-001.md`
@@ -10,7 +10,7 @@
 - 2026-04-08
 
 ## Confirmation Date
-- pending
+- 2026-04-08
 
 ## Resolution Summary
 - The Tauri renderer now skips sidebar `innerHTML` replacement when a streamed state update does not change the actual rendered tree markup.
@@ -23,6 +23,7 @@
 - 2026-04-08: investigation confirmed repeated sidebar rerenders during streamed output
 - 2026-04-08: fix attempt 001 started
 - 2026-04-08: local verification completed; awaiting user confirmation
+- 2026-04-08: user confirmed the sidebar rerender fix
 
 ## Notes
 - `bun x tsc --noEmit -p src/TerminalWindowManager.Tauri/tsconfig.json` passed.

@@ -4,7 +4,7 @@
 Settings default shell selector does not behave like an editable combobox and does not persist custom shell history
 
 ## Status
-- open
+- fixed
 
 ## Reported Symptoms
 - Clicking the selector arrow does not open a usable combobox-style menu.

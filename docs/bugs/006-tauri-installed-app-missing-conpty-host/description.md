@@ -4,7 +4,7 @@
 Installed Tauri app cannot find the ConPTY host executable
 
 ## Status
-- in_progress
+- fixed
 
 ## Reported Symptoms
 - After installing the Tauri `setup.exe`, the app reports that `TerminalWindowManager.ConPTYHost.exe` was not found.

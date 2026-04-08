@@ -1,7 +1,7 @@
 # Bug Status
 
 ## Current State
-- awaiting_user_confirmation
+- fixed
 
 ## Active Attempt
 - `fix-attempt-002.md`
@@ -10,7 +10,7 @@
 - 2026-04-08
 
 ## Confirmation Date
-- pending
+- 2026-04-08
 
 ## Resolution Summary
 - The Tauri build now publishes the ConPTY host into bundled resources before packaging, and local desktop package rebuilds include the helper payload in `target/release/resources/TerminalWindowManager.ConPTYHost/`.
@@ -29,6 +29,7 @@
 - 2026-04-08: user reported the rebuilt installed app still opens an empty console window before the GUI appears
 - 2026-04-08: fix attempt 002 started to correct the Windows subsystem on the packaged executable
 - 2026-04-08: rebuilt package verified with PE subsystem `Windows GUI`; awaiting user confirmation
+- 2026-04-08: user confirmed the packaged-app startup fixes
 
 ## Notes
 - The installed-app error already points at the packaged `resources/TerminalWindowManager.ConPTYHost` location, which makes the packaging gap directly observable.

@@ -1,7 +1,7 @@
 # Fix Attempt 001
 
 ## Attempt Status
-- awaiting_user_confirmation
+- fixed
 
 ## Goal
 - Make the Tauri project default CWD reliably affect new project consoles and stopped consoles that still inherit the previous default.
@@ -38,10 +38,11 @@
 - `src/TerminalWindowManager.Tauri/src/mainview/main.ts(696,63)`: an unrelated callsite has a type mismatch.
 
 ## Outcome
-- Local fix is in place and the Rust backend compiles. User confirmation is still needed against the Tauri app behavior.
+- Local fix is in place and the Rust backend compiles.
+- User confirmed the Tauri app behavior is fixed.
 
 ## Next Step
-- Have the user verify that changing a project default CWD affects newly created project consoles and stopped inherited consoles in the Tauri app.
+- None.
 
 ## Remaining Gaps
 - No automated UI-level regression test exists for this workflow yet.

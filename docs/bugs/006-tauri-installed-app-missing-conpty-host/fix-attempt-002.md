@@ -1,7 +1,7 @@
 # Fix Attempt 002
 
 ## Attempt Status
-- awaiting_user_confirmation
+- fixed
 
 ## Goal
 - Remove the stray console window from the installed Tauri app by linking the packaged executable as a Windows GUI subsystem binary.
@@ -36,10 +36,11 @@
 - The rebuilt `src/TerminalWindowManager.Tauri/src-tauri/target/release/terminal-window-manager-tauri.exe` now reports subsystem `0x2` (`Windows GUI`) instead of `0x3` (`Windows CUI`).
 
 ## Outcome
-- Local packaging verification succeeded. The rebuilt installer now contains a GUI-subsystem main executable, which should stop Windows from opening a stray empty console window for the app process.
+- Local packaging verification succeeded. The rebuilt installer now contains a GUI-subsystem main executable, which stops Windows from opening a stray empty console window for the app process.
+- User confirmed the installed app behavior is fixed.
 
 ## Next Step
-- Reinstall from the rebuilt package and confirm the installed app launches without the empty console window.
+- None.
 
 ## Remaining Gaps
-- Installed-app confirmation is still required after rebuilding and reinstalling the package.
+- None after user confirmation.

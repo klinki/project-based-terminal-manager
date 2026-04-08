@@ -1,7 +1,7 @@
 # Bug Status
 
 ## Current State
-- awaiting_user_confirmation
+- fixed
 
 ## Active Attempt
 - `fix-attempt-001.md`
@@ -10,7 +10,7 @@
 - 2026-04-08
 
 ## Confirmation Date
-- pending
+- 2026-04-08
 
 ## Resolution Summary
 - Tauri now delegates new-console CWD resolution to the backend and updates stopped inherited project consoles when the project default CWD changes.
@@ -23,6 +23,7 @@
 - 2026-04-08: investigation confirmed frontend/backend CWD resolution mismatch and stale inherited terminal CWDs
 - 2026-04-08: fix attempt 001 started
 - 2026-04-08: local verification completed; awaiting user confirmation
+- 2026-04-08: user confirmed the project default CWD fix
 
 ## Notes
 - `cargo check --manifest-path src/TerminalWindowManager.Tauri/src-tauri/Cargo.toml` passed.

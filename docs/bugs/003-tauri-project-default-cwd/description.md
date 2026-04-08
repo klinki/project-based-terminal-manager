@@ -4,7 +4,7 @@
 Tauri project default working directory does not reliably apply to project consoles
 
 ## Status
-- open
+- fixed
 
 ## Reported Symptoms
 - Setting a project's default CWD in the Tauri UI does not behave as expected.
