@@ -248,8 +248,35 @@ impl SessionManager {
 
         {
             let mut state = self.state.lock().map_err(|error| error.to_string())?;
-            let project = Self::find_project_mut(&mut state, &project_id)?;
-            project.default_cwd = Some(trimmed_cwd.to_string());
+            let global_default_cwd = state.defaults.default_cwd.clone();
+            let (resolved_project_id, inherited_previous_cwd) = {
+                let project = Self::find_project_mut(&mut state, &project_id)?;
+                let inherited_previous_cwd = project
+                    .default_cwd
+                    .clone()
+                    .unwrap_or(global_default_cwd);
+                project.default_cwd = Some(trimmed_cwd.to_string());
+                (project.id.clone(), inherited_previous_cwd)
+            };
+
+            for terminal in &mut state.terminals {
+                if terminal.project_id != resolved_project_id {
+                    continue;
+                }
+
+                if terminal.cwd != inherited_previous_cwd {
+                    continue;
+                }
+
+                if matches!(
+                    terminal.status,
+                    TerminalStatus::Running | TerminalStatus::Starting
+                ) {
+                    continue;
+                }
+
+                terminal.cwd = trimmed_cwd.to_string();
+            }
         }
 
         self.persist_and_emit_state()?;

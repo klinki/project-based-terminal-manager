@@ -1197,7 +1197,7 @@ async function createConsoleFromProject(projectId: string): Promise<void> {
 	state = await getRendererRpc().proxy.request.createTerminal({
 		projectId: project.id,
 		name,
-		cwd: project.defaultCwd ?? state.defaults.defaultCwd,
+		cwd: "",
 		shell: state.defaults.defaultShell,
 	});
 
