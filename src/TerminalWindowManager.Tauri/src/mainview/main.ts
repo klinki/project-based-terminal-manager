@@ -96,7 +96,14 @@ type SettingsDialogResult = {
 	customShells: string[];
 };
 
+type TitlebarDragState = {
+	pointerId: number;
+	startX: number;
+	startY: number;
+};
+
 const BUILT_IN_SHELL_OPTIONS = ["pwsh.exe", "cmd.exe"] as const;
+const TITLEBAR_DRAG_THRESHOLD_PX = 4;
 
 let state: AppState = {
 	defaults: {
@@ -129,6 +136,7 @@ let pendingSettingsResolve: ((value: SettingsDialogResult | null) => void) | nul
 let settingsDialogCustomShells: string[] = [];
 let settingsShellMenuOpen = false;
 let lastRenderedTreeMarkup = "";
+let titlebarDragState: TitlebarDragState | null = null;
 
 const terminalViews = new Map<string, TerminalView>();
 const utf8Decoder = new TextDecoder();
@@ -144,7 +152,7 @@ function getRendererRpc() {
 
 app.innerHTML = `
 	<div class="app-shell">
-		<header id="titlebar" class="titlebar" data-tauri-drag-region>
+		<header id="titlebar" class="titlebar">
 			<div class="titlebar-title">Terminal Window Manager Tauri</div>
 			<div class="titlebar-controls">
 				<button id="win-minimize" class="titlebar-button" type="button" title="Minimize">
@@ -407,21 +415,56 @@ titlebar.addEventListener("pointerdown", (event) => {
 	}
 
 	const target = event.target as HTMLElement;
-	if (target.closest(".titlebar-controls") || target.closest("button")) {
+	if (isTitlebarInteractiveTarget(target)) {
 		return;
 	}
 
+	titlebarDragState = {
+		pointerId: event.pointerId,
+		startX: event.clientX,
+		startY: event.clientY,
+	};
+});
+
+titlebar.addEventListener("pointermove", (event) => {
+	if (!titlebarDragState || titlebarDragState.pointerId !== event.pointerId) {
+		return;
+	}
+
+	const dragDistance = Math.hypot(
+		event.clientX - titlebarDragState.startX,
+		event.clientY - titlebarDragState.startY,
+	);
+	if (dragDistance < TITLEBAR_DRAG_THRESHOLD_PX) {
+		return;
+	}
+
+	titlebarDragState = null;
 	event.preventDefault();
 	void getCurrentWindow().startDragging();
 });
 
 titlebar.addEventListener("dblclick", (event) => {
 	const target = event.target as HTMLElement;
-	if (target.closest(".titlebar-controls") || target.closest("button")) {
+	if (isTitlebarInteractiveTarget(target)) {
 		return;
 	}
 
+	titlebarDragState = null;
+	event.preventDefault();
 	void getCurrentWindow().toggleMaximize();
+});
+
+titlebar.addEventListener("pointerup", (event) => {
+	if (titlebarDragState?.pointerId === event.pointerId) {
+		titlebarDragState = null;
+	}
+});
+
+titlebar.addEventListener("pointercancel", (event) => {
+	if (titlebarDragState?.pointerId === event.pointerId) {
+		titlebarDragState = null;
+	}
 });
 
 inspectorToggle.addEventListener("click", () => {
@@ -2158,6 +2201,17 @@ function queryHtmlElement<TElement extends HTMLElement>(id: string): TElement {
 	}
 
 	return element as TElement;
+}
+
+function isTitlebarInteractiveTarget(target: HTMLElement): boolean {
+	return Boolean(
+		target.closest(".titlebar-controls") ||
+			target.closest("button") ||
+			target.closest("input") ||
+			target.closest("textarea") ||
+			target.closest("select") ||
+			target.closest("a"),
+	);
 }
 
 
