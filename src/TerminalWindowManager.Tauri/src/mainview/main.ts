@@ -90,10 +90,19 @@ type TerminalView = {
 	surface: HTMLDivElement;
 };
 
+type SettingsDialogResult = {
+	defaultCwd: string;
+	defaultShell: string;
+	customShells: string[];
+};
+
+const BUILT_IN_SHELL_OPTIONS = ["pwsh.exe", "cmd.exe"] as const;
+
 let state: AppState = {
 	defaults: {
 		defaultCwd: "",
 		defaultShell: "",
+		customShells: [],
 	},
 	projects: [],
 	terminals: [],
@@ -115,9 +124,11 @@ let inspectorCollapsed = false;
 let contextMenuState: { kind: "project" | "terminal"; id: string } | null = null;
 let pendingConfirmResolve: ((confirmed: boolean) => void) | null = null;
 let pendingRenameResolve: ((value: string | null) => void) | null = null;
-let pendingSettingsResolve:
-	| ((value: { defaultCwd: string; defaultShell: string } | null) => void)
-	| null = null;
+let pendingSettingsResolve: ((value: SettingsDialogResult | null) => void) | null =
+	null;
+let settingsDialogCustomShells: string[] = [];
+let settingsShellMenuOpen = false;
+let lastRenderedTreeMarkup = "";
 
 const terminalViews = new Map<string, TerminalView>();
 const utf8Decoder = new TextDecoder();
@@ -283,17 +294,36 @@ app.innerHTML = `
 				</label>
 				<label class="settings-field">
 					<span class="settings-label">Default shell</span>
-					<input
-						id="settings-dialog-default-shell"
-						class="dialog-input"
-						type="text"
-						list="settings-shell-options"
-						spellcheck="false" />
-					<datalist id="settings-shell-options">
-						<option value="powershell.exe"></option>
-						<option value="cmd.exe"></option>
-					</datalist>
-					<span class="settings-hint">Choose powershell.exe, cmd.exe, or type another executable or full path.</span>
+					<div id="settings-shell-combobox" class="settings-shell-combobox">
+						<div class="settings-shell-input-row">
+							<input
+								id="settings-dialog-default-shell"
+								class="dialog-input settings-shell-input"
+								type="text"
+								spellcheck="false"
+								autocomplete="off"
+								aria-autocomplete="list"
+								aria-haspopup="listbox"
+								aria-controls="settings-shell-menu"
+								aria-expanded="false" />
+							<button
+								id="settings-shell-toggle"
+								class="settings-shell-toggle"
+								type="button"
+								title="Show shell options"
+								aria-label="Show shell options">
+								<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+									<path d="m6 9 6 6 6-6"></path>
+								</svg>
+							</button>
+						</div>
+						<div
+							id="settings-shell-menu"
+							class="settings-shell-menu hidden"
+							role="listbox"
+							aria-label="Default shell options"></div>
+					</div>
+					<span class="settings-hint">Choose pwsh.exe, cmd.exe, or type another executable or full path. Saved custom shells appear here and can be removed.</span>
 				</label>
 				<div class="confirm-dialog-actions">
 					<button class="secondary-button" value="cancel">Cancel</button>
@@ -356,6 +386,12 @@ const settingsDialogInputCwd =
 	queryHtmlElement<HTMLInputElement>("settings-dialog-default-cwd");
 const settingsDialogInputShell =
 	queryHtmlElement<HTMLInputElement>("settings-dialog-default-shell");
+const settingsShellCombobox =
+	queryHtmlElement<HTMLDivElement>("settings-shell-combobox");
+const settingsShellToggle =
+	queryHtmlElement<HTMLButtonElement>("settings-shell-toggle");
+const settingsShellMenu =
+	queryHtmlElement<HTMLDivElement>("settings-shell-menu");
 const winMinimize = queryHtmlElement<HTMLButtonElement>("win-minimize");
 const winMaximize = queryHtmlElement<HTMLButtonElement>("win-maximize");
 const winClose = queryHtmlElement<HTMLButtonElement>("win-close");
@@ -396,6 +432,79 @@ inspectorToggle.addEventListener("click", () => {
 
 settingsButton.addEventListener("click", () => {
 	void runUiAction("Settings", openSettingsDialog);
+});
+
+settingsDialogInputShell.addEventListener("focus", () => {
+	openSettingsShellMenu();
+});
+
+settingsDialogInputShell.addEventListener("click", () => {
+	openSettingsShellMenu();
+});
+
+settingsDialogInputShell.addEventListener("input", () => {
+	openSettingsShellMenu();
+});
+
+settingsDialogInputShell.addEventListener("keydown", (event) => {
+	if (event.key === "ArrowDown") {
+		event.preventDefault();
+		openSettingsShellMenu();
+		return;
+	}
+
+	if (event.key === "Escape" && settingsShellMenuOpen) {
+		event.preventDefault();
+		event.stopPropagation();
+		closeSettingsShellMenu();
+	}
+});
+
+settingsShellToggle.addEventListener("click", (event) => {
+	event.preventDefault();
+	if (settingsShellMenuOpen) {
+		closeSettingsShellMenu();
+		return;
+	}
+
+	openSettingsShellMenu();
+	settingsDialogInputShell.focus();
+});
+
+settingsShellMenu.addEventListener("click", (event) => {
+	const target = event.target as HTMLElement;
+	const removeButton = target.closest<HTMLButtonElement>("[data-custom-shell-delete]");
+	if (removeButton) {
+		const shell = removeButton.dataset.customShellDelete;
+		if (!shell) {
+			return;
+		}
+
+		settingsDialogCustomShells = settingsDialogCustomShells.filter(
+			(candidate) => normalizeShellKey(candidate) !== normalizeShellKey(shell),
+		);
+		if (normalizeShellKey(settingsDialogInputShell.value) === normalizeShellKey(shell)) {
+			settingsDialogInputShell.value = "";
+		}
+		renderSettingsShellMenu();
+		settingsDialogInputShell.focus();
+		return;
+	}
+
+	const optionButton = target.closest<HTMLButtonElement>("[data-shell-option]");
+	if (!optionButton) {
+		return;
+	}
+
+	const shell = optionButton.dataset.shellOption;
+	if (!shell) {
+		return;
+	}
+
+	settingsDialogInputShell.value = shell;
+	closeSettingsShellMenu();
+	settingsDialogInputShell.focus();
+	settingsDialogInputShell.setSelectionRange(shell.length, shell.length);
 });
 
 winMinimize.addEventListener("click", () => {
@@ -631,6 +740,9 @@ window.addEventListener("resize", () => {
 
 window.addEventListener("click", (event) => {
 	const target = event.target as HTMLElement;
+	if (!settingsShellCombobox.contains(target)) {
+		closeSettingsShellMenu();
+	}
 	if (sidebarContextMenu.contains(target)) {
 		return;
 	}
@@ -665,6 +777,7 @@ renameDialog.addEventListener("close", () => {
 });
 
 settingsDialog.addEventListener("close", () => {
+	closeSettingsShellMenu();
 	const resolver = pendingSettingsResolve;
 	pendingSettingsResolve = null;
 	if (!resolver) {
@@ -676,6 +789,10 @@ settingsDialog.addEventListener("close", () => {
 			? {
 					defaultCwd: settingsDialogInputCwd.value.trim(),
 					defaultShell: settingsDialogInputShell.value.trim(),
+					customShells: normalizeCustomShells(
+						settingsDialogCustomShells,
+						settingsDialogInputShell.value,
+					),
 				}
 			: null,
 	);
@@ -976,10 +1093,7 @@ function showRenameDialog(options: {
 	});
 }
 
-function showSettingsDialog(options: {
-	defaultCwd: string;
-	defaultShell: string;
-}): Promise<{ defaultCwd: string; defaultShell: string } | null> {
+function showSettingsDialog(options: SettingsDialogResult): Promise<SettingsDialogResult | null> {
 	if (pendingSettingsResolve) {
 		pendingSettingsResolve(null);
 		pendingSettingsResolve = null;
@@ -987,17 +1101,146 @@ function showSettingsDialog(options: {
 
 	settingsDialogInputCwd.value = options.defaultCwd;
 	settingsDialogInputShell.value = options.defaultShell;
+	settingsDialogCustomShells = normalizeCustomShells(
+		options.customShells,
+		options.defaultShell,
+	);
+	renderSettingsShellMenu();
+	closeSettingsShellMenu();
 	settingsDialog.returnValue = "cancel";
 	settingsDialog.showModal();
 	requestAnimationFrame(() => {
 		settingsDialogInputCwd.focus();
 		settingsDialogInputCwd.select();
 	});
-	return new Promise<{ defaultCwd: string; defaultShell: string } | null>(
+	return new Promise<SettingsDialogResult | null>(
 		(resolve) => {
 			pendingSettingsResolve = resolve;
 		},
 	);
+}
+
+function openSettingsShellMenu(): void {
+	settingsShellMenuOpen = true;
+	settingsShellMenu.classList.remove("hidden");
+	settingsDialogInputShell.setAttribute("aria-expanded", "true");
+	settingsShellToggle.setAttribute("aria-expanded", "true");
+	renderSettingsShellMenu();
+}
+
+function closeSettingsShellMenu(): void {
+	settingsShellMenuOpen = false;
+	settingsShellMenu.classList.add("hidden");
+	settingsDialogInputShell.setAttribute("aria-expanded", "false");
+	settingsShellToggle.setAttribute("aria-expanded", "false");
+}
+
+function renderSettingsShellMenu(): void {
+	const filter = normalizeShellKey(settingsDialogInputShell.value);
+	const builtInOptions = BUILT_IN_SHELL_OPTIONS.filter((shell) =>
+		matchesShellFilter(shell, filter),
+	);
+	const customOptions = settingsDialogCustomShells.filter((shell) =>
+		matchesShellFilter(shell, filter),
+	);
+
+	const builtInMarkup = builtInOptions
+		.map((shell) => renderShellOptionMarkup(shell, "builtin"))
+		.join("");
+	const customMarkup = customOptions
+		.map((shell) => renderShellOptionMarkup(shell, "custom"))
+		.join("");
+
+	settingsShellMenu.innerHTML = `
+		<div class="settings-shell-group">
+			<div class="settings-shell-group-label">Built-in</div>
+			${builtInMarkup || '<div class="settings-shell-empty">No built-in shells match the current filter.</div>'}
+		</div>
+		<div class="settings-shell-group">
+			<div class="settings-shell-group-label">Custom</div>
+			${customMarkup || '<div class="settings-shell-empty">Type a shell path or command and save settings to remember it here.</div>'}
+		</div>
+	`;
+}
+
+function renderShellOptionMarkup(
+	shell: string,
+	source: "builtin" | "custom",
+): string {
+	if (source === "builtin") {
+		return `
+			<button
+				type="button"
+				class="settings-shell-option"
+				data-shell-option="${escapeHtmlAttribute(shell)}"
+				role="option">
+				<span class="settings-shell-option-value">${escapeHtml(shell)}</span>
+				<span class="settings-shell-option-kind">Built-in</span>
+			</button>
+		`;
+	}
+
+	return `
+		<div class="settings-shell-option-row">
+			<button
+				type="button"
+				class="settings-shell-option"
+				data-shell-option="${escapeHtmlAttribute(shell)}"
+				role="option">
+				<span class="settings-shell-option-value">${escapeHtml(shell)}</span>
+				<span class="settings-shell-option-kind">Custom</span>
+			</button>
+			<button
+				type="button"
+				class="settings-shell-remove"
+				data-custom-shell-delete="${escapeHtmlAttribute(shell)}"
+				aria-label="Delete saved shell ${escapeHtmlAttribute(shell)}"
+				title="Delete saved shell">
+				<span aria-hidden="true">X</span>
+			</button>
+		</div>
+	`;
+}
+
+function normalizeCustomShells(
+	customShells: string[],
+	currentShell = "",
+): string[] {
+	const normalized = new Map<string, string>();
+	const push = (value: string) => {
+		const trimmed = value.trim();
+		if (!trimmed || isBuiltInShell(trimmed)) {
+			return;
+		}
+
+		const key = normalizeShellKey(trimmed);
+		if (!normalized.has(key)) {
+			normalized.set(key, trimmed);
+		}
+	};
+
+	push(currentShell);
+	for (const shell of customShells) {
+		push(shell);
+	}
+
+	return [...normalized.values()];
+}
+
+function matchesShellFilter(shell: string, filter: string): boolean {
+	return !filter || normalizeShellKey(shell).includes(filter);
+}
+
+function normalizeShellKey(shell: string): string {
+	return shell.trim().toLowerCase();
+}
+
+function isBuiltInShell(shell: string): boolean {
+	const normalized = normalizeShellKey(shell);
+	return normalized === "pwsh" ||
+		normalized === "pwsh.exe" ||
+		normalized === "cmd" ||
+		normalized === "cmd.exe";
 }
 
 async function runUiAction(actionName: string, action: () => Promise<void>): Promise<void> {
@@ -1240,6 +1483,7 @@ async function openSettingsDialog(): Promise<void> {
 	const settings = await showSettingsDialog({
 		defaultCwd: state.defaults.defaultCwd,
 		defaultShell: state.defaults.defaultShell,
+		customShells: state.defaults.customShells,
 	});
 
 	if (!settings) {
@@ -1279,139 +1523,146 @@ async function selectTerminal(terminalId: string): Promise<void> {
 function renderTree(): void {
 	projectCount.textContent = String(state.projects.length);
 
+	let nextTreeMarkup: string;
 	if (state.projects.length === 0) {
-		projectTreeElement.innerHTML = `
+		nextTreeMarkup = `
 			<li class="empty-state">
 				<div class="empty-state-title">No projects yet</div>
 				<div class="empty-state-copy">Create a project to start organizing consoles.</div>
 			</li>
 		`;
-		return;
-	}
+	} else {
+		nextTreeMarkup = sortProjects(state.projects)
+			.map((project) => {
+				const terminals = sortTerminals(
+					state.terminals.filter((terminal) => terminal.projectId === project.id),
+				);
+				const isProjectSelected =
+					selection?.kind === "project" && selection.id === project.id;
+				const isEditing = editingProjectId === project.id;
+				const isCollapsed = collapsedProjectIds.has(project.id);
 
-	projectTreeElement.innerHTML = sortProjects(state.projects)
-		.map((project) => {
-			const terminals = sortTerminals(
-				state.terminals.filter((terminal) => terminal.projectId === project.id),
-			);
-			const isProjectSelected =
-				selection?.kind === "project" && selection.id === project.id;
-			const isEditing = editingProjectId === project.id;
-			const isCollapsed = collapsedProjectIds.has(project.id);
-
-			const projectLabel = isEditing
-				? `
-					<div class="tree-project-shell selected">
+				const projectLabel = isEditing
+					? `
+						<div class="tree-project-shell selected">
+							<button
+								type="button"
+								class="tree-project-toggle ${isCollapsed ? "collapsed" : ""}"
+								data-project-toggle-id="${project.id}"
+								aria-label="${isCollapsed ? "Expand" : "Collapse"} ${escapeHtmlAttribute(project.name)}">
+								${chevronIconMarkup()}
+							</button>
+							${folderIconMarkup()}
+							<form class="tree-project-form" data-project-edit-form="${project.id}">
+								<input
+									class="tree-project-input"
+									data-project-edit-input="${project.id}"
+									type="text"
+									value="${escapeHtmlAttribute(editingProjectDraft)}"
+									aria-label="Project name" />
+							</form>
+							<span class="tree-project-count">${terminals.length}</span>
+						</div>
+					`
+					: `
 						<button
 							type="button"
-							class="tree-project-toggle ${isCollapsed ? "collapsed" : ""}"
-							data-project-toggle-id="${project.id}"
-							aria-label="${isCollapsed ? "Expand" : "Collapse"} ${escapeHtmlAttribute(project.name)}">
-							${chevronIconMarkup()}
+							class="tree-project-button ${isProjectSelected ? "active" : ""}"
+							data-project-id="${project.id}">
+							<span
+								class="tree-project-toggle ${isCollapsed ? "collapsed" : ""}"
+								data-project-toggle-id="${project.id}"
+								role="button"
+								tabindex="-1"
+								aria-label="${isCollapsed ? "Expand" : "Collapse"} ${escapeHtmlAttribute(project.name)}">
+								${chevronIconMarkup()}
+							</span>
+							${folderIconMarkup()}
+							<span class="tree-project-copy">
+								<span class="tree-project-title">${escapeHtml(project.name)}</span>
+								<span class="tree-project-detail">${formatConsoleCount(terminals.length)}</span>
+							</span>
 						</button>
-						${folderIconMarkup()}
-						<form class="tree-project-form" data-project-edit-form="${project.id}">
-							<input
-								class="tree-project-input"
-								data-project-edit-input="${project.id}"
-								type="text"
-								value="${escapeHtmlAttribute(editingProjectDraft)}"
-								aria-label="Project name" />
-						</form>
-						<span class="tree-project-count">${terminals.length}</span>
-					</div>
-				`
-				: `
-					<button
-						type="button"
-						class="tree-project-button ${isProjectSelected ? "active" : ""}"
-						data-project-id="${project.id}">
-						<span
-							class="tree-project-toggle ${isCollapsed ? "collapsed" : ""}"
-							data-project-toggle-id="${project.id}"
-							role="button"
-							tabindex="-1"
-							aria-label="${isCollapsed ? "Expand" : "Collapse"} ${escapeHtmlAttribute(project.name)}">
-							${chevronIconMarkup()}
-						</span>
-						${folderIconMarkup()}
-						<span class="tree-project-copy">
-							<span class="tree-project-title">${escapeHtml(project.name)}</span>
-							<span class="tree-project-detail">${formatConsoleCount(terminals.length)}</span>
-						</span>
-					</button>
-				`;
+					`;
 
-			const terminalsMarkup =
-				terminals.length === 0
-					? `<li class="tree-empty">No consoles</li>`
-					: terminals
-							.map(
-								(terminal) => {
-									const isTerminalEditing = editingTerminalId === terminal.id;
-									if (isTerminalEditing) {
+				const terminalsMarkup =
+					terminals.length === 0
+						? `<li class="tree-empty">No consoles</li>`
+						: terminals
+								.map(
+									(terminal) => {
+										const isTerminalEditing = editingTerminalId === terminal.id;
+										if (isTerminalEditing) {
+											return `
+												<li>
+													<div class="tree-terminal-shell active">
+														<form class="tree-terminal-form" data-terminal-edit-form="${terminal.id}">
+															<input
+																class="tree-terminal-input"
+																data-terminal-edit-input="${terminal.id}"
+																type="text"
+																value="${escapeHtmlAttribute(editingTerminalDraft)}"
+																aria-label="Console name" />
+														</form>
+														<div class="tree-terminal-meta">
+															<span class="activity-chip compact ${terminal.activity.phase}">${formatActivityPhase(terminal.activity.phase)}</span>
+															<span class="tree-terminal-time">${formatRelativeTime(getTerminalRecency(terminal))}</span>
+														</div>
+													</div>
+												</li>
+											`;
+										}
+
 										return `
 											<li>
-												<div class="tree-terminal-shell active">
-													<form class="tree-terminal-form" data-terminal-edit-form="${terminal.id}">
-														<input
-															class="tree-terminal-input"
-															data-terminal-edit-input="${terminal.id}"
-															type="text"
-															value="${escapeHtmlAttribute(editingTerminalDraft)}"
-															aria-label="Console name" />
-													</form>
+												<button
+													type="button"
+													class="tree-terminal-button ${selection?.kind === "terminal" && selection.id === terminal.id ? "active" : ""}"
+													data-terminal-id="${terminal.id}">
+													<div class="tree-terminal-copy">
+														<span class="tree-terminal-title">${escapeHtml(terminal.name)}</span>
+														<span class="tree-terminal-detail">${escapeHtml(terminal.activity.summary)}</span>
+													</div>
 													<div class="tree-terminal-meta">
 														<span class="activity-chip compact ${terminal.activity.phase}">${formatActivityPhase(terminal.activity.phase)}</span>
 														<span class="tree-terminal-time">${formatRelativeTime(getTerminalRecency(terminal))}</span>
 													</div>
-												</div>
+												</button>
 											</li>
 										`;
-									}
+									},
+								)
+								.join("");
 
-									return `
-										<li>
-											<button
-												type="button"
-												class="tree-terminal-button ${selection?.kind === "terminal" && selection.id === terminal.id ? "active" : ""}"
-												data-terminal-id="${terminal.id}">
-												<div class="tree-terminal-copy">
-													<span class="tree-terminal-title">${escapeHtml(terminal.name)}</span>
-													<span class="tree-terminal-detail">${escapeHtml(terminal.activity.summary)}</span>
-												</div>
-												<div class="tree-terminal-meta">
-													<span class="activity-chip compact ${terminal.activity.phase}">${formatActivityPhase(terminal.activity.phase)}</span>
-													<span class="tree-terminal-time">${formatRelativeTime(getTerminalRecency(terminal))}</span>
-												</div>
-											</button>
-										</li>
-									`;
-								},
-							)
-							.join("");
+				return `
+					<li class="tree-node">
+						<div class="tree-project-row" data-project-row-id="${project.id}">
+							${projectLabel}
+							<button
+								type="button"
+								class="tree-project-action"
+								data-project-new-console-id="${project.id}"
+								title="New console in ${escapeHtmlAttribute(project.name)}"
+								aria-label="New console in ${escapeHtmlAttribute(project.name)}">
+								<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+									<path d="M12 5v14"></path>
+									<path d="M5 12h14"></path>
+								</svg>
+							</button>
+						</div>
+						<ul class="tree-children ${isCollapsed ? "collapsed" : ""}">${terminalsMarkup}</ul>
+					</li>
+				`;
+			})
+			.join("");
+	}
 
-			return `
-				<li class="tree-node">
-					<div class="tree-project-row" data-project-row-id="${project.id}">
-						${projectLabel}
-						<button
-							type="button"
-							class="tree-project-action"
-							data-project-new-console-id="${project.id}"
-							title="New console in ${escapeHtmlAttribute(project.name)}"
-							aria-label="New console in ${escapeHtmlAttribute(project.name)}">
-							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-								<path d="M12 5v14"></path>
-								<path d="M5 12h14"></path>
-							</svg>
-						</button>
-					</div>
-					<ul class="tree-children ${isCollapsed ? "collapsed" : ""}">${terminalsMarkup}</ul>
-				</li>
-			`;
-		})
-		.join("");
+	if (nextTreeMarkup === lastRenderedTreeMarkup) {
+		return;
+	}
+
+	projectTreeElement.innerHTML = nextTreeMarkup;
+	lastRenderedTreeMarkup = nextTreeMarkup;
 
 	focusProjectEditorIfNeeded();
 	focusTerminalEditorIfNeeded();
