@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.1](https://github.com/klinki/project-based-terminal-manager/compare/v0.1.0...v0.1.1) (2026-04-08)
+
+
+### Bug Fixes
+
+* Add persistent shell selector ([9c2b385](https://github.com/klinki/project-based-terminal-manager/commit/9c2b385ee5d9fcfbc88eedf443fa9dee51d4877a))
+* Correct dialog heading colors ([0c4e807](https://github.com/klinki/project-based-terminal-manager/commit/0c4e8073c1f43086f5e303e138fea66dff7a0f99))
+
 ## [0.1.0](https://github.com/klinki/project-based-terminal-manager/compare/v0.0.1...v0.1.0) (2026-04-08)
 
 
