@@ -1,0 +1,25 @@
+src/TerminalWindowManager.Tauri/src-tauri/src/backend.rs
+  58170d74be474445 251-259,262-264,267-268,271-273,275,278
+src/TerminalWindowManager.Tauri/src/mainview/main.ts
+  58170d74be474445 1200
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "392cf12c8a4fd39b48dc5e8ec7223fd48a7a94fd",
+  "prompts": {
+    "58170d74be474445": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d6cfd-2b88-7cd1-9902-c42b8f09d810",
+        "model": "gpt-5.4"
+      },
+      "human_author": "David Klingenberg",
+      "messages": [],
+      "total_additions": 3815,
+      "total_deletions": 3767,
+      "accepted_lines": 1850,
+      "overriden_lines": 193
+    }
+  }
+}
