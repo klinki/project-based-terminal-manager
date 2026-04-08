@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0](https://github.com/klinki/project-based-terminal-manager/compare/v0.0.1...v0.1.0) (2026-04-08)
+
+
+### Features
+
+* **shells:** default to powershell on windows ([038c9e2](https://github.com/klinki/project-based-terminal-manager/commit/038c9e2393118b664be4d787d0c05e537fd75aaa))
+
 ## [0.0.1](https://github.com/klinki/project-based-terminal-manager/compare/v0.0.0...v0.0.1) (2026-04-03)
 
 
