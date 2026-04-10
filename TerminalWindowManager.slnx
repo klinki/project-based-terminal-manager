@@ -1,9 +1,7 @@
 <Solution>
   <Folder Name="/src/">
-    <Project Path="src/TerminalWindowManager.App/TerminalWindowManager.App.csproj" />
     <Project Path="src/TerminalWindowManager.ConPTYHost/TerminalWindowManager.ConPTYHost.csproj" />
     <Project Path="src/TerminalWindowManager.Core/TerminalWindowManager.Core.csproj" />
-    <Project Path="src/TerminalWindowManager.Terminal/TerminalWindowManager.Terminal.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/TerminalWindowManager.Core.Tests/TerminalWindowManager.Core.Tests.csproj" />
