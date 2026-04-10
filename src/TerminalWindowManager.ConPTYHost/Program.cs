@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
+using TerminalWindowManager.Core.Services;
 
 namespace TerminalWindowManager.ConPTYHost;
 
@@ -26,6 +27,7 @@ internal static class Program
 
         var writerTask = WriteMessagesAsync(outboundMessages.Reader, writer);
         CommandLineOptions? options = null;
+        TerminalSequenceParser? sequenceParser = null;
 
         try
         {
@@ -38,12 +40,31 @@ internal static class Program
                 options.Columns,
                 options.Rows);
 
-            session.OutputReceived += data =>
+            sequenceParser = new TerminalSequenceParser();
+            sequenceParser.ProgressDetected += info =>
             {
                 outboundMessages.Writer.TryWrite(new
                 {
+                    type = "terminalProgress",
+                    sessionId = options.SessionId,
+                    state = (int)info.State,
+                    progress = info.Value,
+                    occurredAt = DateTimeOffset.UtcNow.ToString("O")
+                });
+            };
+
+            session.OutputReceived += data =>
+            {
+                var visibleOutput = sequenceParser.Parse(data);
+                if (visibleOutput.Length == 0)
+                {
+                    return;
+                }
+
+                outboundMessages.Writer.TryWrite(new
+                {
                     type = "output",
-                    dataBase64 = Convert.ToBase64String(data)
+                    dataBase64 = Convert.ToBase64String(visibleOutput)
                 });
             };
 
@@ -67,6 +88,7 @@ internal static class Program
             }
 
             var exitCode = await exitTask;
+            EmitPendingOutput(sequenceParser, outboundMessages.Writer);
             outboundMessages.Writer.TryWrite(new
             {
                 type = "exit",
@@ -85,6 +107,7 @@ internal static class Program
         }
         catch (Exception exception)
         {
+            EmitPendingOutput(sequenceParser, outboundMessages.Writer);
             outboundMessages.Writer.TryWrite(CreateErrorEvent(exception, options));
             outboundMessages.Writer.Complete();
             await writerTask;
@@ -192,6 +215,28 @@ internal static class Program
             var line = JsonSerializer.Serialize(message, SerializerOptions);
             await writer.WriteLineAsync(line);
         }
+    }
+
+    private static void EmitPendingOutput(
+        TerminalSequenceParser? sequenceParser,
+        ChannelWriter<object> outboundMessages)
+    {
+        if (sequenceParser is null)
+        {
+            return;
+        }
+
+        var pendingOutput = sequenceParser.FlushPendingOutput();
+        if (pendingOutput.Length == 0)
+        {
+            return;
+        }
+
+        outboundMessages.TryWrite(new
+        {
+            type = "output",
+            dataBase64 = Convert.ToBase64String(pendingOutput)
+        });
     }
 
     private static object CreateErrorEvent(Exception exception, CommandLineOptions? options)

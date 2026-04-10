@@ -7,6 +7,12 @@ export type TerminalActivityPhase =
 	| "streaming"
 	| "waiting"
 	| "attention";
+export type TerminalProgressState =
+	| "none"
+	| "normal"
+	| "error"
+	| "indeterminate"
+	| "warning";
 
 export interface TerminalActivity {
 	phase: TerminalActivityPhase;
@@ -14,6 +20,12 @@ export interface TerminalActivity {
 	detail: string;
 	progress: number;
 	isIndeterminate: boolean;
+	updatedAt: string;
+}
+
+export interface TerminalProgressInfo {
+	state: TerminalProgressState;
+	value: number;
 	updatedAt: string;
 }
 
@@ -61,6 +73,7 @@ export interface TerminalRecord {
 	shell: string;
 	status: TerminalStatus;
 	activity: TerminalActivity;
+	progressInfo: TerminalProgressInfo;
 	lastExitCode: number | null;
 	createdAt: string;
 	lastStartedAt: string | null;
@@ -115,6 +128,14 @@ export interface TerminalErrorMessage {
 export interface TerminalDiagnosticNoticeMessage {
 	terminalId: string;
 	message: string;
+}
+
+export interface TerminalProgressMessage {
+	terminalId: string;
+	sessionId: string;
+	progressInfo: TerminalProgressInfo;
+	activity: TerminalActivity;
+	occurredAt: string;
 }
 
 export type TerminalManagerRpc = {
@@ -186,6 +207,7 @@ export type TerminalManagerRpc = {
 			terminalExit: TerminalExitMessage;
 			terminalError: TerminalErrorMessage;
 			terminalDiagnosticNotice: TerminalDiagnosticNoticeMessage;
+			terminalProgress: TerminalProgressMessage;
 		};
 	}>;
 };

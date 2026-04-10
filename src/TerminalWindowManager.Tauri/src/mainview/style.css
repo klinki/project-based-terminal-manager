@@ -500,9 +500,70 @@ input {
 	flex-shrink: 0;
 }
 
+.tree-progress {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	min-width: 0;
+}
+
+.tree-progress-track {
+	position: relative;
+	width: 28px;
+	height: 6px;
+	overflow: hidden;
+	border-radius: 999px;
+	background: rgba(255, 255, 255, 0.12);
+}
+
+.tree-progress-fill {
+	display: block;
+	height: 100%;
+	border-radius: inherit;
+	background: currentColor;
+}
+
+.tree-progress-indeterminate .tree-progress-fill {
+	width: 55%;
+	animation: tree-progress-indeterminate 1s ease-in-out infinite;
+}
+
+.tree-progress-label {
+	font-size: 0.64rem;
+	font-weight: 600;
+	letter-spacing: 0.02em;
+	color: currentColor;
+}
+
+.tree-progress-normal {
+	color: #5cb3ff;
+}
+
+.tree-progress-error {
+	color: #ff7b72;
+}
+
+.tree-progress-indeterminate {
+	color: #6be6a8;
+}
+
+.tree-progress-warning {
+	color: #f6c765;
+}
+
 .tree-terminal-time {
 	font-size: 0.68rem;
 	color: var(--muted);
+}
+
+@keyframes tree-progress-indeterminate {
+	0% {
+		transform: translateX(-100%);
+	}
+
+	100% {
+		transform: translateX(100%);
+	}
 }
 
 .tree-empty,

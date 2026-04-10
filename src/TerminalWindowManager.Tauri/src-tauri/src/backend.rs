@@ -18,7 +18,8 @@ use crate::diagnostics::{
 };
 use crate::models::{
     AppState, ProjectRecord, TerminalActivity, TerminalActivityPhase, TerminalCommandFailure,
-    TerminalRecord, TerminalSessionFailure, TerminalStatus,
+    TerminalProgressInfo, TerminalProgressState, TerminalRecord, TerminalSessionFailure,
+    TerminalStatus,
 };
 
 const INPUT_SETTLE_MS: u64 = 1100;
@@ -223,6 +224,7 @@ impl SessionManager {
                     .unwrap_or(default_shell),
                 status: TerminalStatus::Stopped,
                 activity: TerminalActivity::for_status(TerminalStatus::Stopped),
+                progress_info: TerminalProgressInfo::none(),
                 last_exit_code: None,
                 created_at: now_iso_string(),
                 last_started_at: None,
@@ -407,6 +409,7 @@ impl SessionManager {
             let terminal = Self::find_terminal_mut(&mut state, &terminal_id)?;
             terminal.status = TerminalStatus::Stopped;
             terminal.activity = TerminalActivity::for_status(TerminalStatus::Stopped);
+            terminal.progress_info = TerminalProgressInfo::none();
             terminal.last_exit_code = None;
         }
 
@@ -559,6 +562,7 @@ impl SessionManager {
 
             terminal.status = TerminalStatus::Starting;
             terminal.activity = TerminalActivity::for_status(TerminalStatus::Starting);
+            terminal.progress_info = TerminalProgressInfo::none();
             terminal.last_started_at = Some(now_iso_string());
             terminal.last_exit_code = None;
             terminal.diagnostic_log_path =
@@ -871,6 +875,9 @@ impl SessionManager {
                 self.handle_helper_started(terminal, live_session, event)
             }
             HelperEvent::Output(event) => self.handle_helper_output(terminal, live_session, event),
+            HelperEvent::TerminalProgress(event) => {
+                self.handle_helper_progress(terminal, live_session, event)
+            }
             HelperEvent::Exit(event) => self.handle_helper_exit(terminal, live_session, event),
             HelperEvent::Error(event) => self.handle_helper_error(terminal, live_session, event),
         }
@@ -887,18 +894,19 @@ impl SessionManager {
             session.received_started_event = true;
         }
 
-        {
-            let mut state = self.state.lock().map_err(|error| error.to_string())?;
-            if let Some(record) = state
-                .terminals
-                .iter_mut()
-                .find(|candidate| candidate.id == terminal.id)
             {
-                record.status = TerminalStatus::Running;
-                record.diagnostic_log_path = Some(event.diagnostic_log_path.clone());
-                record.activity = TerminalActivity::for_status(TerminalStatus::Running);
+                let mut state = self.state.lock().map_err(|error| error.to_string())?;
+                if let Some(record) = state
+                    .terminals
+                    .iter_mut()
+                    .find(|candidate| candidate.id == terminal.id)
+                {
+                    record.status = TerminalStatus::Running;
+                    record.diagnostic_log_path = Some(event.diagnostic_log_path.clone());
+                    record.activity = TerminalActivity::for_status(TerminalStatus::Running);
+                    record.progress_info = TerminalProgressInfo::none();
+                }
             }
-        }
 
         self.persist_and_emit_state()?;
         self.emit_event(
@@ -955,6 +963,59 @@ impl SessionManager {
         Ok(())
     }
 
+    fn handle_helper_progress(
+        &self,
+        terminal: &TerminalRecord,
+        live_session: &Arc<Mutex<LiveSession>>,
+        event: HelperProgressEvent,
+    ) -> Result<(), String> {
+        {
+            let session = live_session.lock().map_err(|error| error.to_string())?;
+            if session.session_id != event.session_id {
+                return Ok(());
+            }
+        }
+
+        let progress_info = match Self::map_terminal_progress(&event) {
+            Some(progress_info) => progress_info,
+            None => return Ok(()),
+        };
+
+        let activity = Self::activity_for_progress(&progress_info);
+
+        {
+            let mut state = self.state.lock().map_err(|error| error.to_string())?;
+            if let Some(record) = state
+                .terminals
+                .iter_mut()
+                .find(|candidate| candidate.id == terminal.id)
+            {
+                record.progress_info = progress_info.clone();
+                record.activity = activity.clone();
+            }
+        }
+
+        {
+            let mut tokens = self
+                .activity_tokens
+                .lock()
+                .map_err(|error| error.to_string())?;
+            tokens.remove(&terminal.id);
+        }
+
+        self.emit_event(
+            "terminal-progress",
+            serde_json::json!({
+                "terminalId": terminal.id,
+                "sessionId": event.session_id,
+                "progressInfo": progress_info,
+                "activity": activity,
+                "occurredAt": event.occurred_at,
+            }),
+        );
+        Ok(())
+    }
+
     fn handle_helper_exit(
         &self,
         terminal: &TerminalRecord,
@@ -987,6 +1048,7 @@ impl SessionManager {
             {
                 record.status = TerminalStatus::Exited;
                 record.activity = TerminalActivity::for_status(TerminalStatus::Exited);
+                record.progress_info = TerminalProgressInfo::none();
                 record.last_exit_code = event.exit_code;
                 record.last_session_failure = Some(TerminalSessionFailure {
                     session_id: event.session_id.clone(),
@@ -1057,6 +1119,7 @@ impl SessionManager {
                 .find(|candidate| candidate.id == terminal.id)
             {
                 record.status = TerminalStatus::Error;
+                record.progress_info = TerminalProgressInfo::none();
                 record.last_session_failure = Some(TerminalSessionFailure {
                     session_id: event.session_id.clone().unwrap_or_else(new_uuid_string),
                     timestamp: event.occurred_at.clone(),
@@ -1415,6 +1478,77 @@ impl SessionManager {
         Ok(())
     }
 
+    fn map_terminal_progress(event: &HelperProgressEvent) -> Option<TerminalProgressInfo> {
+        let state = match event.state {
+            0 => TerminalProgressState::None,
+            1 => TerminalProgressState::Normal,
+            2 => TerminalProgressState::Error,
+            3 => TerminalProgressState::Indeterminate,
+            4 => TerminalProgressState::Warning,
+            _ => return None,
+        };
+
+        Some(TerminalProgressInfo {
+            state,
+            value: match state {
+                TerminalProgressState::None | TerminalProgressState::Indeterminate => 0,
+                _ => event.progress.clamp(0, 100),
+            },
+            updated_at: event.occurred_at.clone(),
+        })
+    }
+
+    fn activity_for_progress(progress: &TerminalProgressInfo) -> TerminalActivity {
+        match progress.state {
+            TerminalProgressState::Normal => TerminalActivity {
+                phase: TerminalActivityPhase::Working,
+                summary: format!("Progress {}%", progress.value),
+                detail: format!("Shell reported active progress at {}%.", progress.value),
+                progress: progress.value,
+                is_indeterminate: false,
+                updated_at: progress.updated_at.clone(),
+            },
+            TerminalProgressState::Error => TerminalActivity {
+                phase: TerminalActivityPhase::Attention,
+                summary: format!("Progress error {}%", progress.value),
+                detail: format!(
+                    "Shell reported an error progress state at {}%.",
+                    progress.value
+                ),
+                progress: progress.value,
+                is_indeterminate: false,
+                updated_at: progress.updated_at.clone(),
+            },
+            TerminalProgressState::Indeterminate => TerminalActivity {
+                phase: TerminalActivityPhase::Working,
+                summary: "Progress active".to_string(),
+                detail: "Shell reported indeterminate progress.".to_string(),
+                progress: 60,
+                is_indeterminate: true,
+                updated_at: progress.updated_at.clone(),
+            },
+            TerminalProgressState::Warning => TerminalActivity {
+                phase: TerminalActivityPhase::Attention,
+                summary: format!("Progress warning {}%", progress.value),
+                detail: format!(
+                    "Shell reported a warning progress state at {}%.",
+                    progress.value
+                ),
+                progress: progress.value,
+                is_indeterminate: false,
+                updated_at: progress.updated_at.clone(),
+            },
+            TerminalProgressState::None => TerminalActivity {
+                phase: TerminalActivityPhase::Waiting,
+                summary: "Ready".to_string(),
+                detail: "Shell is running and waiting for input.".to_string(),
+                progress: 100,
+                is_indeterminate: false,
+                updated_at: progress.updated_at.clone(),
+            },
+        }
+    }
+
     fn schedule_terminal_activity(
         &self,
         terminal_id: String,
@@ -1454,6 +1588,37 @@ impl SessionManager {
 
             if !should_apply {
                 return;
+            }
+
+            let active_progress = {
+                let state = match manager.state.lock() {
+                    Ok(state) => state,
+                    Err(error) => {
+                        eprintln!("Failed to lock state for activity scheduling: {}", error);
+                        return;
+                    }
+                };
+
+                state
+                    .terminals
+                    .iter()
+                    .find(|terminal| terminal.id == terminal_id)
+                    .map(|terminal| terminal.progress_info.clone())
+            };
+
+            if let Some(progress_info) = active_progress {
+                if progress_info.state != TerminalProgressState::None {
+                    let activity = Self::activity_for_progress(&progress_info);
+                    let _ = manager.update_terminal_activity(
+                        &terminal_id,
+                        activity.phase,
+                        activity.summary,
+                        activity.detail,
+                        activity.progress,
+                        activity.is_indeterminate,
+                    );
+                    return;
+                }
             }
 
             let _ = manager.update_terminal_activity(
@@ -1612,6 +1777,7 @@ impl SessionManager {
                 .find(|candidate| candidate.id == terminal.id)
             {
                 record.status = TerminalStatus::Error;
+                record.progress_info = TerminalProgressInfo::none();
                 record.last_session_failure = Some(TerminalSessionFailure {
                     session_id: session_id.to_string(),
                     timestamp: now_iso_string(),
@@ -1788,6 +1954,8 @@ struct TerminalLaunchContext {
 enum HelperEvent {
     Started(HelperStartedEvent),
     Output(HelperOutputEvent),
+    #[serde(rename = "terminalProgress")]
+    TerminalProgress(HelperProgressEvent),
     Exit(HelperExitEvent),
     Error(HelperErrorEvent),
 }
@@ -1806,6 +1974,15 @@ struct HelperStartedEvent {
 #[serde(rename_all = "camelCase")]
 struct HelperOutputEvent {
     data_base64: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct HelperProgressEvent {
+    session_id: String,
+    state: u32,
+    progress: u32,
+    occurred_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

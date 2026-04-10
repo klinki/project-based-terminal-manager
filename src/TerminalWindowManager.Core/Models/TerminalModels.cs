@@ -10,10 +10,26 @@ public enum TerminalTabState
     Hosted
 }
 
+public enum TerminalProgressState
+{
+    None = 0,
+    Normal = 1,
+    Error = 2,
+    Indeterminate = 3,
+    Warning = 4
+}
+
+public readonly record struct TerminalProgressInfo(TerminalProgressState State, int Value)
+{
+    public static TerminalProgressInfo None => new(TerminalProgressState.None, 0);
+}
+
 public sealed class ManagedTerminalTab : ObservableObject
 {
     private TerminalTabState _state = TerminalTabState.Configured;
     private IntPtr _lastKnownWindowHwnd;
+    private TerminalProgressState _progressState = TerminalProgressState.None;
+    private int _progressValue;
 
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid ProjectId { get; set; }
@@ -30,6 +46,38 @@ public sealed class ManagedTerminalTab : ObservableObject
     }
 
     [JsonIgnore]
+    public TerminalProgressState ProgressState
+    {
+        get => _progressState;
+        set
+        {
+            if (!SetProperty(ref _progressState, value))
+            {
+                return;
+            }
+
+            OnPropertyChanged(nameof(HasVisibleProgress));
+            OnPropertyChanged(nameof(IsProgressIndeterminate));
+            OnPropertyChanged(nameof(ProgressDisplayText));
+        }
+    }
+
+    [JsonIgnore]
+    public int ProgressValue
+    {
+        get => _progressValue;
+        set
+        {
+            if (!SetProperty(ref _progressValue, value))
+            {
+                return;
+            }
+
+            OnPropertyChanged(nameof(ProgressDisplayText));
+        }
+    }
+
+    [JsonIgnore]
     public IntPtr LastKnownWindowHwnd
     {
         get => _lastKnownWindowHwnd;
@@ -38,6 +86,21 @@ public sealed class ManagedTerminalTab : ObservableObject
 
     [JsonIgnore]
     public string DisplayLabel => Name;
+
+    [JsonIgnore]
+    public bool HasVisibleProgress => ProgressState != TerminalProgressState.None;
+
+    [JsonIgnore]
+    public bool IsProgressIndeterminate => ProgressState == TerminalProgressState.Indeterminate;
+
+    [JsonIgnore]
+    public string ProgressDisplayText =>
+        ProgressState switch
+        {
+            TerminalProgressState.None => string.Empty,
+            TerminalProgressState.Indeterminate => "Working",
+            _ => $"{Math.Clamp(ProgressValue, 0, 100)}%"
+        };
 
     public ManagedTerminalTab()
     {

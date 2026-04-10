@@ -5,6 +5,7 @@ import type {
 	AppState,
 	AppDefaults,
 	TerminalActivity,
+	TerminalProgressInfo,
 	TerminalRecord,
 } from "../shared/types";
 
@@ -92,6 +93,7 @@ export class AppStateStore {
 			shell: terminal.shell || this.getDefaultShell(),
 			status,
 			activity: this.createDefaultActivity(status),
+			progressInfo: this.createDefaultProgressInfo(),
 			lastExitCode: terminal.lastExitCode ?? null,
 			createdAt: terminal.createdAt ?? new Date().toISOString(),
 			lastStartedAt: terminal.lastStartedAt ?? null,
@@ -107,6 +109,7 @@ export class AppStateStore {
 			terminals: state.terminals.map((terminal) => ({
 				...terminal,
 				activity: this.createDefaultActivity(terminal.status),
+				progressInfo: this.createDefaultProgressInfo(),
 			})),
 		};
 	}
@@ -201,5 +204,13 @@ export class AppStateStore {
 					updatedAt: new Date().toISOString(),
 				};
 		}
+	}
+
+	private createDefaultProgressInfo(): TerminalProgressInfo {
+		return {
+			state: "none",
+			value: 0,
+			updatedAt: new Date().toISOString(),
+		};
 	}
 }

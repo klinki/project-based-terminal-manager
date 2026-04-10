@@ -25,6 +25,16 @@ pub enum TerminalActivityPhase {
     Attention,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TerminalProgressState {
+    None,
+    Normal,
+    Error,
+    Indeterminate,
+    Warning,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TerminalActivity {
@@ -33,6 +43,14 @@ pub struct TerminalActivity {
     pub detail: String,
     pub progress: u32,
     pub is_indeterminate: bool,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalProgressInfo {
+    pub state: TerminalProgressState,
+    pub value: u32,
     pub updated_at: String,
 }
 
@@ -105,6 +123,8 @@ pub struct TerminalRecord {
     pub status: TerminalStatus,
     #[serde(default = "default_idle_activity")]
     pub activity: TerminalActivity,
+    #[serde(default = "default_progress_info")]
+    pub progress_info: TerminalProgressInfo,
     #[serde(default)]
     pub last_exit_code: Option<i32>,
     #[serde(default = "now_iso_string")]
@@ -146,6 +166,7 @@ impl AppState {
         let mut snapshot = self.clone();
         for terminal in &mut snapshot.terminals {
             terminal.activity = TerminalActivity::for_status(terminal.status);
+            terminal.progress_info = TerminalProgressInfo::none();
         }
 
         snapshot
@@ -206,6 +227,7 @@ impl AppState {
                 terminal.status = TerminalStatus::Stopped;
             }
             terminal.activity = TerminalActivity::for_status(terminal.status);
+            terminal.progress_info = TerminalProgressInfo::none();
         }
 
         self.active_terminal_id = None;
@@ -270,6 +292,16 @@ impl TerminalActivity {
     }
 }
 
+impl TerminalProgressInfo {
+    pub fn none() -> Self {
+        Self {
+            state: TerminalProgressState::None,
+            value: 0,
+            updated_at: now_iso_string(),
+        }
+    }
+}
+
 impl Default for TerminalActivity {
     fn default() -> Self {
         Self::for_status(TerminalStatus::Stopped)
@@ -282,6 +314,10 @@ fn default_terminal_status() -> TerminalStatus {
 
 fn default_idle_activity() -> TerminalActivity {
     TerminalActivity::for_status(TerminalStatus::Stopped)
+}
+
+fn default_progress_info() -> TerminalProgressInfo {
+    TerminalProgressInfo::none()
 }
 
 fn default_project_name() -> String {

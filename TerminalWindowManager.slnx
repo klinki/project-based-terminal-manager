@@ -5,4 +5,7 @@
     <Project Path="src/TerminalWindowManager.Core/TerminalWindowManager.Core.csproj" />
     <Project Path="src/TerminalWindowManager.Terminal/TerminalWindowManager.Terminal.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/TerminalWindowManager.Core.Tests/TerminalWindowManager.Core.Tests.csproj" />
+  </Folder>
 </Solution>

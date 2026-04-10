@@ -7,6 +7,7 @@ import type {
 	TerminalExitMessage,
 	TerminalManagerRpc,
 	TerminalOutputMessage,
+	TerminalProgressMessage,
 	TerminalStartedMessage,
 } from "../shared/types";
 
@@ -17,6 +18,7 @@ type MessageHandlers = {
 	terminalExit: (message: TerminalExitMessage) => void;
 	terminalError: (message: TerminalErrorMessage) => void;
 	terminalDiagnosticNotice: (message: TerminalDiagnosticNoticeMessage) => void;
+	terminalProgress: (message: TerminalProgressMessage) => void;
 };
 
 type RPCDefinition = {
@@ -91,6 +93,9 @@ async function registerMessageHandlers(messages: MessageHandlers): Promise<void>
 		}),
 		listen<TerminalDiagnosticNoticeMessage>("terminal-diagnostic-notice", (event) => {
 			messages.terminalDiagnosticNotice(event.payload);
+		}),
+		listen<TerminalProgressMessage>("terminal-progress", (event) => {
+			messages.terminalProgress(event.payload);
 		}),
 	]);
 }

@@ -9,6 +9,8 @@ import type {
 	TerminalErrorMessage,
 	TerminalExitMessage,
 	TerminalManagerRpc,
+	TerminalProgressInfo,
+	TerminalProgressMessage,
 	TerminalRecord,
 	TerminalStartedMessage,
 } from "../shared/types";
@@ -131,6 +133,7 @@ const rpc = BrowserView.defineRPC<TerminalManagerRpc>({
 						0,
 						false,
 					),
+					progressInfo: createDefaultProgressInfo(),
 					lastExitCode: null,
 					createdAt: new Date().toISOString(),
 					lastStartedAt: null,
@@ -174,6 +177,7 @@ const rpc = BrowserView.defineRPC<TerminalManagerRpc>({
 			activateTerminal: async ({ terminalId, cols, rows }) => {
 				const terminal = findTerminal(terminalId);
 				state.activeTerminalId = terminal.id;
+				terminal.progressInfo = createDefaultProgressInfo();
 				updateTerminalActivity(
 					terminal.id,
 					"working",
@@ -199,6 +203,11 @@ const rpc = BrowserView.defineRPC<TerminalManagerRpc>({
 					true,
 				);
 				scheduleActivity(terminal.id, INPUT_SETTLE_MS, () => {
+					if (terminal.progressInfo.state !== "none") {
+						applyProgressActivity(terminal.id, terminal.progressInfo);
+						return;
+					}
+
 					updateTerminalActivity(
 						terminal.id,
 						"waiting",
@@ -220,6 +229,7 @@ const rpc = BrowserView.defineRPC<TerminalManagerRpc>({
 			restartTerminal: async ({ terminalId, cols, rows }) => {
 				const terminal = findTerminal(terminalId);
 				state.activeTerminalId = terminal.id;
+				terminal.progressInfo = createDefaultProgressInfo();
 				updateTerminalActivity(
 					terminal.id,
 					"working",
@@ -335,6 +345,14 @@ function createActivity(
 	};
 }
 
+function createDefaultProgressInfo(): TerminalProgressInfo {
+	return {
+		state: "none",
+		value: 0,
+		updatedAt: new Date().toISOString(),
+	};
+}
+
 function hasActivityChanged(
 	previous: TerminalActivity,
 	next: TerminalActivity,
@@ -371,6 +389,69 @@ function updateTerminalActivity(
 
 	terminal.activity = next;
 	void pushStateChanged();
+}
+
+function describeProgressActivity(progressInfo: TerminalProgressInfo): {
+	phase: TerminalActivityPhase;
+	summary: string;
+	detail: string;
+	progress: number;
+	isIndeterminate: boolean;
+} {
+	switch (progressInfo.state) {
+		case "normal":
+			return {
+				phase: "working",
+				summary: `Progress ${progressInfo.value}%`,
+				detail: `Shell reported active progress at ${progressInfo.value}%.`,
+				progress: progressInfo.value,
+				isIndeterminate: false,
+			};
+		case "error":
+			return {
+				phase: "attention",
+				summary: `Progress error ${progressInfo.value}%`,
+				detail: `Shell reported an error progress state at ${progressInfo.value}%.`,
+				progress: progressInfo.value,
+				isIndeterminate: false,
+			};
+		case "indeterminate":
+			return {
+				phase: "working",
+				summary: "Progress active",
+				detail: "Shell reported indeterminate progress.",
+				progress: 60,
+				isIndeterminate: true,
+			};
+		case "warning":
+			return {
+				phase: "attention",
+				summary: `Progress warning ${progressInfo.value}%`,
+				detail: `Shell reported a warning progress state at ${progressInfo.value}%.`,
+				progress: progressInfo.value,
+				isIndeterminate: false,
+			};
+		default:
+			return {
+				phase: "waiting",
+				summary: "Ready",
+				detail: "Shell is running and waiting for input.",
+				progress: 100,
+				isIndeterminate: false,
+			};
+	}
+}
+
+function applyProgressActivity(terminalId: string, progressInfo: TerminalProgressInfo): void {
+	const next = describeProgressActivity(progressInfo);
+	updateTerminalActivity(
+		terminalId,
+		next.phase,
+		next.summary,
+		next.detail,
+		next.progress,
+		next.isIndeterminate,
+	);
 }
 
 function clearActivityTimer(terminalId: string): void {
@@ -429,6 +510,11 @@ const sessionManager = new SessionManager({
 		scheduleActivity(message.terminalId, OUTPUT_SETTLE_MS, () => {
 			const terminal = findTerminal(message.terminalId);
 			if (terminal.status !== "running") {
+				return;
+			}
+
+			if (terminal.progressInfo.state !== "none") {
+				applyProgressActivity(message.terminalId, terminal.progressInfo);
 				return;
 			}
 
@@ -492,6 +578,20 @@ const sessionManager = new SessionManager({
 		);
 		await getWebviewRpc().proxy.send.terminalDiagnosticNotice(message);
 		await pushStateChanged();
+	},
+	onProgress: async (message) => {
+		clearActivityTimer(message.terminalId);
+		const terminal = findTerminal(message.terminalId);
+		terminal.progressInfo = message.progressInfo;
+		applyProgressActivity(message.terminalId, message.progressInfo);
+		const webviewMessage: TerminalProgressMessage = {
+			terminalId: message.terminalId,
+			sessionId: message.sessionId,
+			progressInfo: message.progressInfo,
+			activity: terminal.activity,
+			occurredAt: message.occurredAt,
+		};
+		await getWebviewRpc().proxy.send.terminalProgress(webviewMessage);
 	},
 	onStateChanged: async () => {
 		persistState();

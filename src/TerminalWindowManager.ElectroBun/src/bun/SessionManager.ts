@@ -9,6 +9,7 @@ import type {
 	TerminalErrorMessage,
 	TerminalExitMessage,
 	TerminalOutputMessage,
+	TerminalProgressInfo,
 	TerminalRecord,
 	TerminalSessionFailure,
 	TerminalStartedMessage,
@@ -28,6 +29,12 @@ type SessionHooks = {
 	onExit(message: TerminalExitMessage): Promise<void> | void;
 	onError(message: TerminalErrorMessage): Promise<void> | void;
 	onDiagnosticNotice(message: TerminalDiagnosticNoticeMessage): Promise<void> | void;
+	onProgress(message: {
+		terminalId: string;
+		sessionId: string;
+		progressInfo: TerminalProgressInfo;
+		occurredAt: string;
+	}): Promise<void> | void;
 	onStateChanged(): Promise<void> | void;
 };
 
@@ -43,6 +50,14 @@ type HelperStartedEvent = {
 type HelperOutputEvent = {
 	type: "output";
 	dataBase64: string;
+};
+
+type HelperProgressEvent = {
+	type: "terminalProgress";
+	sessionId: string;
+	state: number;
+	progress: number;
+	occurredAt: string;
 };
 
 type HelperExitEvent = {
@@ -72,6 +87,7 @@ type HelperErrorEvent = {
 type HelperEvent =
 	| HelperStartedEvent
 	| HelperOutputEvent
+	| HelperProgressEvent
 	| HelperExitEvent
 	| HelperErrorEvent;
 
@@ -185,6 +201,7 @@ export class SessionManager {
 		}
 
 		terminal.status = "starting";
+		terminal.progressInfo = this.createDefaultProgressInfo();
 		terminal.lastStartedAt = new Date().toISOString();
 		terminal.lastExitCode = null;
 		terminal.diagnosticLogPath = diagnosticsPaths.eventsPath;
@@ -382,6 +399,7 @@ export class SessionManager {
 				liveSession.receivedStartedEvent = true;
 				terminal.status = "running";
 				terminal.diagnosticLogPath = payload.diagnosticLogPath;
+				terminal.progressInfo = this.createDefaultProgressInfo();
 				await this.appendDiagnosticEvent(liveSession.eventsPath, {
 					eventId: crypto.randomUUID(),
 					type: "sessionStarted",
@@ -410,6 +428,26 @@ export class SessionManager {
 					dataBase64: payload.dataBase64,
 				});
 				return;
+
+			case "terminalProgress": {
+				if (payload.sessionId !== liveSession.sessionId) {
+					return;
+				}
+
+				const progressInfo = this.mapProgressInfo(payload);
+				if (!progressInfo) {
+					return;
+				}
+
+				terminal.progressInfo = progressInfo;
+				await this.hooks.onProgress({
+					terminalId: terminal.id,
+					sessionId: payload.sessionId,
+					progressInfo,
+					occurredAt: payload.occurredAt,
+				});
+				return;
+			}
 
 			case "exit":
 				liveSession.receivedExitEvent = true;
@@ -511,6 +549,7 @@ export class SessionManager {
 			payload.stderrExcerpt ?? this.getHelperStderrExcerpt(liveSession);
 
 		terminal.status = "exited";
+		terminal.progressInfo = this.createDefaultProgressInfo();
 		terminal.lastExitCode = payload.exitCode;
 		terminal.lastSessionFailure = {
 			sessionId: payload.sessionId,
@@ -577,6 +616,7 @@ export class SessionManager {
 		};
 
 		terminal.status = "error";
+		terminal.progressInfo = this.createDefaultProgressInfo();
 		terminal.lastSessionFailure = sessionFailure;
 
 		await this.appendDiagnosticEvent(liveSession.eventsPath, {
@@ -743,6 +783,47 @@ export class SessionManager {
 				? `${commandText.slice(0, 93)}...`
 				: commandText;
 		return `Command failed (${exitCodeText}): ${summary || "unknown command"}`;
+	}
+
+	private createDefaultProgressInfo(): TerminalProgressInfo {
+		return {
+			state: "none",
+			value: 0,
+			updatedAt: new Date().toISOString(),
+		};
+	}
+
+	private mapProgressInfo(payload: HelperProgressEvent): TerminalProgressInfo | null {
+		const state = this.mapProgressState(payload.state);
+		if (!state) {
+			return null;
+		}
+
+		return {
+			state,
+			value:
+				state === "none" || state === "indeterminate"
+					? 0
+					: Math.max(0, Math.min(100, payload.progress)),
+			updatedAt: payload.occurredAt,
+		};
+	}
+
+	private mapProgressState(value: number): TerminalProgressInfo["state"] | null {
+		switch (value) {
+			case 0:
+				return "none";
+			case 1:
+				return "normal";
+			case 2:
+				return "error";
+			case 3:
+				return "indeterminate";
+			case 4:
+				return "warning";
+			default:
+				return null;
+		}
 	}
 
 	private cleanupSession(liveSession: LiveSession): void {

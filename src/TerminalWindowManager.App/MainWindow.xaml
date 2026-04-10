@@ -45,7 +45,82 @@
                         </HierarchicalDataTemplate>
 
                         <DataTemplate DataType="{x:Type models:ManagedTerminalTab}">
-                            <TextBlock Text="{Binding Name}" />
+                            <StackPanel Margin="0,2,0,2">
+                                <TextBlock Text="{Binding Name}" />
+                                <Border x:Name="TerminalProgressBadge"
+                                        Margin="0,4,24,0"
+                                        Padding="6,2"
+                                        CornerRadius="999"
+                                        Background="#DBEAFE"
+                                        Visibility="Collapsed">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Ellipse x:Name="TerminalProgressDot"
+                                                 Width="8"
+                                                 Height="8"
+                                                 Margin="0,0,6,0"
+                                                 Fill="#2563EB" />
+                                        <TextBlock Text="{Binding ProgressDisplayText}"
+                                                   FontSize="11"
+                                                   Foreground="#1F2937" />
+                                    </StackPanel>
+                                </Border>
+                            </StackPanel>
+                            <DataTemplate.Triggers>
+                                <DataTrigger Binding="{Binding ProgressState}"
+                                             Value="{x:Static models:TerminalProgressState.None}">
+                                    <Setter TargetName="TerminalProgressBadge"
+                                            Property="Visibility"
+                                            Value="Collapsed" />
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding ProgressState}"
+                                             Value="{x:Static models:TerminalProgressState.Normal}">
+                                    <Setter TargetName="TerminalProgressBadge"
+                                            Property="Visibility"
+                                            Value="Visible" />
+                                    <Setter TargetName="TerminalProgressBadge"
+                                            Property="Background"
+                                            Value="#DBEAFE" />
+                                    <Setter TargetName="TerminalProgressDot"
+                                            Property="Fill"
+                                            Value="#2563EB" />
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding ProgressState}"
+                                             Value="{x:Static models:TerminalProgressState.Error}">
+                                    <Setter TargetName="TerminalProgressBadge"
+                                            Property="Visibility"
+                                            Value="Visible" />
+                                    <Setter TargetName="TerminalProgressBadge"
+                                            Property="Background"
+                                            Value="#FEE2E2" />
+                                    <Setter TargetName="TerminalProgressDot"
+                                            Property="Fill"
+                                            Value="#DC2626" />
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding ProgressState}"
+                                             Value="{x:Static models:TerminalProgressState.Indeterminate}">
+                                    <Setter TargetName="TerminalProgressBadge"
+                                            Property="Visibility"
+                                            Value="Visible" />
+                                    <Setter TargetName="TerminalProgressBadge"
+                                            Property="Background"
+                                            Value="#DCFCE7" />
+                                    <Setter TargetName="TerminalProgressDot"
+                                            Property="Fill"
+                                            Value="#16A34A" />
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding ProgressState}"
+                                             Value="{x:Static models:TerminalProgressState.Warning}">
+                                    <Setter TargetName="TerminalProgressBadge"
+                                            Property="Visibility"
+                                            Value="Visible" />
+                                    <Setter TargetName="TerminalProgressBadge"
+                                            Property="Background"
+                                            Value="#FEF3C7" />
+                                    <Setter TargetName="TerminalProgressDot"
+                                            Property="Fill"
+                                            Value="#D97706" />
+                                </DataTrigger>
+                            </DataTemplate.Triggers>
                         </DataTemplate>
                     </TreeView.Resources>
                     <TreeView.ItemsSource>

@@ -9,6 +9,7 @@ import type {
 	TerminalActivity,
 	TerminalActivityPhase,
 	TerminalManagerRpc,
+	TerminalProgressInfo,
 	TerminalRecord,
 	TerminalStatus,
 } from "../shared/types";
@@ -68,6 +69,18 @@ const rpc = Electroview.defineRPC<TerminalManagerRpc>({
 					setStatus(`Console '${terminal.name}': ${message}`);
 				}
 			},
+			terminalProgress: ({ terminalId, progressInfo, activity }) => {
+				const terminal = state.terminals.find(
+					(candidate) => candidate.id === terminalId,
+				);
+				if (!terminal) {
+					return;
+				}
+
+				terminal.progressInfo = progressInfo;
+				terminal.activity = activity;
+				scheduleProgressRender();
+			},
 		},
 	},
 });
@@ -119,6 +132,7 @@ let state: AppState = {
 let selection: Selection = null;
 let statusMessage = "Booting Terminal Window Manager Tauri shell...";
 let layoutSyncScheduled = false;
+let progressRenderScheduled = false;
 let editingProjectId: string | null = null;
 let editingProjectDraft = "";
 let shouldFocusProjectEditor = false;
@@ -1635,23 +1649,24 @@ function renderTree(): void {
 								.map(
 									(terminal) => {
 										const isTerminalEditing = editingTerminalId === terminal.id;
-										if (isTerminalEditing) {
-											return `
-												<li>
-													<div class="tree-terminal-shell active">
-														<form class="tree-terminal-form" data-terminal-edit-form="${terminal.id}">
+									if (isTerminalEditing) {
+										return `
+											<li>
+												<div class="tree-terminal-shell active">
+													<form class="tree-terminal-form" data-terminal-edit-form="${terminal.id}">
 															<input
 																class="tree-terminal-input"
 																data-terminal-edit-input="${terminal.id}"
 																type="text"
 																value="${escapeHtmlAttribute(editingTerminalDraft)}"
 																aria-label="Console name" />
-														</form>
-														<div class="tree-terminal-meta">
-															<span class="activity-chip compact ${terminal.activity.phase}">${formatActivityPhase(terminal.activity.phase)}</span>
-															<span class="tree-terminal-time">${formatRelativeTime(getTerminalRecency(terminal))}</span>
-														</div>
+													</form>
+													<div class="tree-terminal-meta">
+														${renderTerminalProgressMarkup(terminal.progressInfo)}
+														<span class="activity-chip compact ${terminal.activity.phase}">${formatActivityPhase(terminal.activity.phase)}</span>
+														<span class="tree-terminal-time">${formatRelativeTime(getTerminalRecency(terminal))}</span>
 													</div>
+												</div>
 												</li>
 											`;
 										}
@@ -1662,15 +1677,16 @@ function renderTree(): void {
 													type="button"
 													class="tree-terminal-button ${selection?.kind === "terminal" && selection.id === terminal.id ? "active" : ""}"
 													data-terminal-id="${terminal.id}">
-													<div class="tree-terminal-copy">
-														<span class="tree-terminal-title">${escapeHtml(terminal.name)}</span>
-														<span class="tree-terminal-detail">${escapeHtml(terminal.activity.summary)}</span>
-													</div>
-													<div class="tree-terminal-meta">
-														<span class="activity-chip compact ${terminal.activity.phase}">${formatActivityPhase(terminal.activity.phase)}</span>
-														<span class="tree-terminal-time">${formatRelativeTime(getTerminalRecency(terminal))}</span>
-													</div>
-												</button>
+												<div class="tree-terminal-copy">
+													<span class="tree-terminal-title">${escapeHtml(terminal.name)}</span>
+													<span class="tree-terminal-detail">${escapeHtml(terminal.activity.summary)}</span>
+												</div>
+												<div class="tree-terminal-meta">
+													${renderTerminalProgressMarkup(terminal.progressInfo)}
+													<span class="activity-chip compact ${terminal.activity.phase}">${formatActivityPhase(terminal.activity.phase)}</span>
+													<span class="tree-terminal-time">${formatRelativeTime(getTerminalRecency(terminal))}</span>
+												</div>
+											</button>
 											</li>
 										`;
 									},
@@ -1744,6 +1760,8 @@ function renderInspector(): void {
 			<dd>${escapeHtml(findProject(selectedTerminal.projectId)?.defaultCwd ?? "Uses global default")}</dd>
 			<dt>Activity</dt>
 			<dd>${escapeHtml(selectedTerminal.activity.detail)}</dd>
+			<dt>Progress</dt>
+			<dd>${escapeHtml(formatProgressSummary(selectedTerminal.progressInfo))}</dd>
 			<dt>Last started</dt>
 			<dd>${selectedTerminal.lastStartedAt ? new Date(selectedTerminal.lastStartedAt).toLocaleString() : "Not started yet"}</dd>
 			<dt>Last telemetry update</dt>
@@ -2015,6 +2033,39 @@ function setStatus(message: string): void {
 	renderStatusBoard();
 }
 
+function scheduleProgressRender(): void {
+	if (progressRenderScheduled) {
+		return;
+	}
+
+	progressRenderScheduled = true;
+	requestAnimationFrame(() => {
+		progressRenderScheduled = false;
+		renderTree();
+		renderInspector();
+		renderStatusBoard();
+	});
+}
+
+function renderTerminalProgressMarkup(progressInfo: TerminalProgressInfo): string {
+	if (progressInfo.state === "none") {
+		return "";
+	}
+
+	const fillWidth = progressInfo.state === "indeterminate"
+		? "100%"
+		: `${Math.max(0, Math.min(100, progressInfo.value))}%`;
+
+	return `
+		<span class="tree-progress tree-progress-${progressInfo.state}" title="${escapeHtmlAttribute(formatProgressSummary(progressInfo))}">
+			<span class="tree-progress-track">
+				<span class="tree-progress-fill" style="width: ${fillWidth};"></span>
+			</span>
+			<span class="tree-progress-label">${escapeHtml(formatProgressLabel(progressInfo))}</span>
+		</span>
+	`;
+}
+
 function renderOptionalCodeBlock(value: string | null | undefined): string {
 	if (!value || !value.trim()) {
 		return "None recorded";
@@ -2115,6 +2166,29 @@ function formatActivityPhase(phase: TerminalActivityPhase): string {
 			return "Attention";
 		default:
 			return "Idle";
+	}
+}
+
+function formatProgressLabel(progressInfo: TerminalProgressInfo): string {
+	if (progressInfo.state === "indeterminate") {
+		return "Run";
+	}
+
+	return `${Math.max(0, Math.min(100, progressInfo.value))}%`;
+}
+
+function formatProgressSummary(progressInfo: TerminalProgressInfo): string {
+	switch (progressInfo.state) {
+		case "normal":
+			return `Normal ${progressInfo.value}%`;
+		case "error":
+			return `Error ${progressInfo.value}%`;
+		case "indeterminate":
+			return "Indeterminate";
+		case "warning":
+			return `Warning ${progressInfo.value}%`;
+		default:
+			return "Hidden";
 	}
 }
 
