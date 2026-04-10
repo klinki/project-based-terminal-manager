@@ -1,0 +1,21 @@
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "6aa05c0fbe2eab3c31a57922c2860de1cfba2d80",
+  "prompts": {
+    "715c65f8aba6c544": {
+      "agent_id": {
+        "tool": "gemini",
+        "id": "28ff042b-d3e9-4090-bb60-ca3877229edb",
+        "model": "gemini-3-flash-preview"
+      },
+      "human_author": "David Klingenberg",
+      "messages": [],
+      "total_additions": 326,
+      "total_deletions": 148,
+      "accepted_lines": 313,
+      "overriden_lines": 10
+    }
+  }
+}
