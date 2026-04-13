@@ -74,6 +74,7 @@ internal static class Program
                 sessionId = options.SessionId,
                 shellPid = session.ProcessId,
                 shellPath = options.ShellPath,
+                cwd = options.WorkingDirectory,
                 diagnosticLogPath = options.DiagnosticsLogPath,
                 startedAt = DateTimeOffset.UtcNow.ToString("O")
             });

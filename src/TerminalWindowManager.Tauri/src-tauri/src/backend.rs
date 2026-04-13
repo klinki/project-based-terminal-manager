@@ -25,6 +25,8 @@ use crate::models::{
 const INPUT_SETTLE_MS: u64 = 1100;
 const OUTPUT_SETTLE_MS: u64 = 1600;
 const MAX_HELPER_STDERR_LINES: usize = 40;
+const MISSING_WORKING_DIRECTORY_PREFIX: &str = "Working directory '";
+const MISSING_WORKING_DIRECTORY_SUFFIX: &str = "' does not exist.";
 
 #[derive(Debug, Clone)]
 pub struct AppStateStore {
@@ -540,42 +542,27 @@ impl SessionManager {
                     .map(|_| ());
             }
         }
-        let terminal_snapshot = {
+        let launch_context = {
             let mut state = self.state.lock().map_err(|error| error.to_string())?;
             let terminal = Self::find_terminal_mut(&mut state, terminal_id)?;
-            let session_id = new_uuid_string();
-            let diagnostics_paths =
-                create_session_diagnostics_paths(&self.app_data_dir, terminal_id, &session_id)
-                    .map_err(|error| error.to_string())?;
-            let power_shell_bootstrap_path = if self.is_power_shell_shell(&terminal.shell) {
-                let script = create_power_shell_bootstrap_script(
-                    terminal_id,
-                    &session_id,
-                    &diagnostics_paths.events_path,
-                );
-                fs::write(&diagnostics_paths.power_shell_bootstrap_path, script)
-                    .map_err(|error| error.to_string())?;
-                Some(diagnostics_paths.power_shell_bootstrap_path.clone())
-            } else {
-                None
-            };
-
             terminal.status = TerminalStatus::Starting;
             terminal.activity = TerminalActivity::for_status(TerminalStatus::Starting);
             terminal.progress_info = TerminalProgressInfo::none();
             terminal.last_started_at = Some(now_iso_string());
             terminal.last_exit_code = None;
-            terminal.diagnostic_log_path =
-                Some(diagnostics_paths.events_path.display().to_string());
             terminal.last_command_failure = None;
             terminal.last_session_failure = None;
 
-            TerminalLaunchContext {
-                session_id,
-                diagnostics_paths,
-                power_shell_bootstrap_path,
-                terminal: terminal.clone(),
-            }
+            let mut context = self.create_launch_context(
+                terminal.clone(),
+                Some(terminal.cwd.clone()),
+                LaunchCwdStrategy::Persisted,
+                cols,
+                rows,
+            )?;
+            terminal.diagnostic_log_path = context.terminal.diagnostic_log_path.clone();
+            context.terminal = terminal.clone();
+            context
         };
 
         {
@@ -584,23 +571,61 @@ impl SessionManager {
             self.emit_state_changed_snapshot(state.clone());
         }
 
-        match self.spawn_session(terminal_snapshot.clone(), cols, rows) {
+        match self.spawn_session(launch_context.clone()) {
             Ok(()) => Ok(()),
             Err(error) => {
                 self.record_launch_failure(
-                    &terminal_snapshot.terminal,
-                    &terminal_snapshot.session_id,
+                    &launch_context.terminal,
+                    &launch_context.session_id,
                     error.clone(),
                 )?;
                 Err(error)
             }
         }
     }
+
+    fn create_launch_context(
+        &self,
+        mut terminal: TerminalRecord,
+        launch_cwd: Option<String>,
+        launch_cwd_strategy: LaunchCwdStrategy,
+        cols: u32,
+        rows: u32,
+    ) -> Result<TerminalLaunchContext, String> {
+        let session_id = new_uuid_string();
+        let diagnostics_paths =
+            create_session_diagnostics_paths(&self.app_data_dir, &terminal.id, &session_id)
+                .map_err(|error| error.to_string())?;
+        let power_shell_bootstrap_path = if self.is_power_shell_shell(&terminal.shell) {
+            let script = create_power_shell_bootstrap_script(
+                &terminal.id,
+                &session_id,
+                &diagnostics_paths.events_path,
+            );
+            fs::write(&diagnostics_paths.power_shell_bootstrap_path, script)
+                .map_err(|error| error.to_string())?;
+            Some(diagnostics_paths.power_shell_bootstrap_path.clone())
+        } else {
+            None
+        };
+
+        terminal.diagnostic_log_path = Some(diagnostics_paths.events_path.display().to_string());
+
+        Ok(TerminalLaunchContext {
+            session_id,
+            diagnostics_paths,
+            power_shell_bootstrap_path,
+            terminal,
+            launch_cwd,
+            launch_cwd_strategy,
+            cols,
+            rows,
+        })
+    }
+
     fn spawn_session(
         &self,
         context: TerminalLaunchContext,
-        cols: u32,
-        rows: u32,
     ) -> Result<(), String> {
         if !self.helper_path.exists() {
             return Err(format!(
@@ -614,24 +639,24 @@ impl SessionManager {
         }
 
         let mut command = Command::new(&self.helper_path);
-        command
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .args([
-                "--cwd",
-                &context.terminal.cwd,
-                "--shell",
-                &context.terminal.shell,
-                "--cols",
-                &cols.max(20).to_string(),
-                "--rows",
-                &rows.max(5).to_string(),
-                "--session-id",
-                &context.session_id,
-                "--events-path",
-                &context.diagnostics_paths.events_path.display().to_string(),
-            ]);
+        command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+
+        if let Some(launch_cwd) = &context.launch_cwd {
+            command.args(["--cwd", launch_cwd]);
+        }
+
+        command.args([
+            "--shell",
+            &context.terminal.shell,
+            "--cols",
+            &context.cols.max(20).to_string(),
+            "--rows",
+            &context.rows.max(5).to_string(),
+            "--session-id",
+            &context.session_id,
+            "--events-path",
+            &context.diagnostics_paths.events_path.display().to_string(),
+        ]);
 
         if let Some(power_shell_bootstrap_path) = &context.power_shell_bootstrap_path {
             command.args([
@@ -665,6 +690,9 @@ impl SessionManager {
             session_id: context.session_id.clone(),
             child: Arc::new(Mutex::new(child)),
             stdin: Arc::new(Mutex::new(stdin)),
+            cols: context.cols,
+            rows: context.rows,
+            launch_cwd_strategy: context.launch_cwd_strategy,
             recent_output_lines: Vec::new(),
             pending_output_line: String::new(),
             helper_stderr_lines: Vec::new(),
@@ -894,19 +922,23 @@ impl SessionManager {
             session.received_started_event = true;
         }
 
+        {
+            let mut state = self.state.lock().map_err(|error| error.to_string())?;
+            if let Some(record) = state
+                .terminals
+                .iter_mut()
+                .find(|candidate| candidate.id == terminal.id)
             {
-                let mut state = self.state.lock().map_err(|error| error.to_string())?;
-                if let Some(record) = state
-                    .terminals
-                    .iter_mut()
-                    .find(|candidate| candidate.id == terminal.id)
-                {
-                    record.status = TerminalStatus::Running;
-                    record.diagnostic_log_path = Some(event.diagnostic_log_path.clone());
-                    record.activity = TerminalActivity::for_status(TerminalStatus::Running);
-                    record.progress_info = TerminalProgressInfo::none();
+                let started_cwd = event.cwd.trim();
+                record.status = TerminalStatus::Running;
+                record.diagnostic_log_path = Some(event.diagnostic_log_path.clone());
+                record.activity = TerminalActivity::for_status(TerminalStatus::Running);
+                record.progress_info = TerminalProgressInfo::none();
+                if !started_cwd.is_empty() && record.cwd != started_cwd {
+                    record.cwd = started_cwd.to_string();
                 }
             }
+        }
 
         self.persist_and_emit_state()?;
         self.emit_event(
@@ -916,6 +948,7 @@ impl SessionManager {
                 "sessionId": event.session_id,
                 "shellPid": event.shell_pid,
                 "shellPath": event.shell_path,
+                "cwd": event.cwd,
                 "diagnosticLogPath": event.diagnostic_log_path,
                 "startedAt": event.started_at,
             }),
@@ -1103,6 +1136,10 @@ impl SessionManager {
                 return Ok(());
             }
             session.received_error_event = true;
+        }
+
+        if self.try_retry_with_fallback_cwd(terminal, live_session, &event)? {
+            return Ok(());
         }
 
         let recent_output_excerpt = self.get_recent_output_excerpt(live_session);
@@ -1925,12 +1962,112 @@ impl SessionManager {
             || normalized.ends_with("powershell")
             || normalized.ends_with("powershell.exe")
     }
+
+    fn try_retry_with_fallback_cwd(
+        &self,
+        terminal: &TerminalRecord,
+        live_session: &Arc<Mutex<LiveSession>>,
+        event: &HelperErrorEvent,
+    ) -> Result<bool, String> {
+        let Some(missing_cwd) = extract_missing_working_directory(&event.message) else {
+            return Ok(false);
+        };
+
+        let (received_started_event, launch_cwd_strategy, cols, rows) = {
+            let session = live_session.lock().map_err(|error| error.to_string())?;
+            (
+                session.received_started_event,
+                session.launch_cwd_strategy,
+                session.cols,
+                session.rows,
+            )
+        };
+        if received_started_event {
+            return Ok(false);
+        }
+
+        let Some((next_launch_cwd, next_strategy)) =
+            self.resolve_next_launch_cwd(terminal, missing_cwd, launch_cwd_strategy)?
+        else {
+            return Ok(false);
+        };
+
+        let terminal_snapshot = {
+            let state = self.state.lock().map_err(|error| error.to_string())?;
+            state
+                .terminals
+                .iter()
+                .find(|candidate| candidate.id == terminal.id)
+                .cloned()
+                .ok_or_else(|| format!("Terminal '{}' was not found.", terminal.id))?
+        };
+        let launch_context = self.create_launch_context(
+            terminal_snapshot,
+            next_launch_cwd,
+            next_strategy,
+            cols,
+            rows,
+        )?;
+
+        {
+            let mut state = self.state.lock().map_err(|error| error.to_string())?;
+            if let Some(record) = state
+                .terminals
+                .iter_mut()
+                .find(|candidate| candidate.id == terminal.id)
+            {
+                record.diagnostic_log_path = launch_context.terminal.diagnostic_log_path.clone();
+            }
+        }
+        self.persist_and_emit_state()?;
+
+        self.cleanup_session(&terminal.id);
+
+        if let Err(error) = self.spawn_session(launch_context.clone()) {
+            self.record_launch_failure(
+                &launch_context.terminal,
+                &launch_context.session_id,
+                error,
+            )?;
+        }
+
+        Ok(true)
+    }
+
+    fn resolve_next_launch_cwd(
+        &self,
+        terminal: &TerminalRecord,
+        missing_cwd: &str,
+        current_strategy: LaunchCwdStrategy,
+    ) -> Result<Option<(Option<String>, LaunchCwdStrategy)>, String> {
+        let effective_default_cwd = {
+            let state = self.state.lock().map_err(|error| error.to_string())?;
+            let project_default_cwd = state
+                .projects
+                .iter()
+                .find(|project| project.id == terminal.project_id)
+                .and_then(|project| project.default_cwd.clone());
+            project_default_cwd
+                .unwrap_or_else(|| state.defaults.default_cwd.clone())
+                .trim()
+                .to_string()
+        };
+
+        Ok(next_launch_cwd_attempt(
+            current_strategy,
+            &effective_default_cwd,
+            missing_cwd,
+        ))
+    }
 }
 #[derive(Debug)]
 struct LiveSession {
     session_id: String,
     child: Arc<Mutex<Child>>,
     stdin: Arc<Mutex<ChildStdin>>,
+    cols: u32,
+    rows: u32,
+    launch_cwd_strategy: LaunchCwdStrategy,
     recent_output_lines: Vec<String>,
     pending_output_line: String,
     helper_stderr_lines: Vec<String>,
@@ -1947,6 +2084,17 @@ struct TerminalLaunchContext {
     diagnostics_paths: SessionDiagnosticsPaths,
     power_shell_bootstrap_path: Option<PathBuf>,
     terminal: TerminalRecord,
+    launch_cwd: Option<String>,
+    launch_cwd_strategy: LaunchCwdStrategy,
+    cols: u32,
+    rows: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LaunchCwdStrategy {
+    Persisted,
+    EffectiveDefault,
+    Unspecified,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1966,6 +2114,7 @@ struct HelperStartedEvent {
     session_id: String,
     shell_pid: u32,
     shell_path: String,
+    cwd: String,
     diagnostic_log_path: String,
     started_at: String,
 }
@@ -2062,5 +2211,120 @@ fn describe_input_activity(data: &str) -> (String, String, u32) {
             "Forwarding interactive input to the shell.".to_string(),
             28,
         )
+    }
+}
+
+fn extract_missing_working_directory(message: &str) -> Option<&str> {
+    message
+        .strip_prefix(MISSING_WORKING_DIRECTORY_PREFIX)?
+        .strip_suffix(MISSING_WORKING_DIRECTORY_SUFFIX)
+}
+
+fn same_path_text(left: &str, right: &str) -> bool {
+    #[cfg(windows)]
+    {
+        left.eq_ignore_ascii_case(right)
+    }
+
+    #[cfg(not(windows))]
+    {
+        left == right
+    }
+}
+
+fn next_launch_cwd_attempt(
+    current_strategy: LaunchCwdStrategy,
+    effective_default_cwd: &str,
+    missing_cwd: &str,
+) -> Option<(Option<String>, LaunchCwdStrategy)> {
+    match current_strategy {
+        LaunchCwdStrategy::Persisted => {
+            if !effective_default_cwd.is_empty()
+                && !same_path_text(effective_default_cwd, missing_cwd)
+            {
+                Some((
+                    Some(effective_default_cwd.to_string()),
+                    LaunchCwdStrategy::EffectiveDefault,
+                ))
+            } else {
+                Some((None, LaunchCwdStrategy::Unspecified))
+            }
+        }
+        LaunchCwdStrategy::EffectiveDefault => {
+            Some((None, LaunchCwdStrategy::Unspecified))
+        }
+        LaunchCwdStrategy::Unspecified => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        extract_missing_working_directory, next_launch_cwd_attempt, LaunchCwdStrategy,
+    };
+
+    #[test]
+    fn parse_missing_working_directory_error_message() {
+        let missing_cwd = extract_missing_working_directory(
+            "Working directory 'C:\\missing\\path' does not exist.",
+        );
+
+        assert_eq!(missing_cwd, Some("C:\\missing\\path"));
+    }
+
+    #[test]
+    fn retry_with_effective_default_before_omitting_cwd() {
+        let next_attempt = next_launch_cwd_attempt(
+            LaunchCwdStrategy::Persisted,
+            "C:\\repo",
+            "C:\\missing",
+        );
+
+        assert_eq!(
+            next_attempt,
+            Some((
+                Some("C:\\repo".to_string()),
+                LaunchCwdStrategy::EffectiveDefault,
+            ))
+        );
+    }
+
+    #[test]
+    fn skip_default_retry_when_it_matches_missing_directory() {
+        let next_attempt = next_launch_cwd_attempt(
+            LaunchCwdStrategy::Persisted,
+            "C:\\missing",
+            "C:\\missing",
+        );
+
+        assert_eq!(
+            next_attempt,
+            Some((None, LaunchCwdStrategy::Unspecified))
+        );
+    }
+
+    #[test]
+    fn omit_cwd_after_default_retry_fails() {
+        let next_attempt = next_launch_cwd_attempt(
+            LaunchCwdStrategy::EffectiveDefault,
+            "C:\\repo",
+            "C:\\repo",
+        );
+
+        assert_eq!(
+            next_attempt,
+            Some((None, LaunchCwdStrategy::Unspecified))
+        );
+    }
+
+    #[test]
+    fn stop_retrying_after_unspecified_launch() {
+        let next_attempt = next_launch_cwd_attempt(
+            LaunchCwdStrategy::Unspecified,
+            "C:\\repo",
+            "C:\\missing",
+        );
+
+        assert_eq!(next_attempt, None);
     }
 }
