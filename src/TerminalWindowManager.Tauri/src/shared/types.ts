@@ -186,6 +186,14 @@ export type TerminalManagerRpc = {
 				projectId: string;
 				cwd: string;
 			}) => Promise<AppState>;
+			logRendererEvent: (params: {
+				level: string;
+				source: string;
+				message: string;
+				terminalId?: string | null;
+				detail?: string | null;
+				stack?: string | null;
+			}) => Promise<{ ok: boolean }>;
 			windowMinimize: (params: Record<string, never>) => Promise<{ ok: boolean }>;
 			windowMaximize: (params: Record<string, never>) => Promise<{ ok: boolean }>;
 			windowClose: (params: Record<string, never>) => Promise<{ ok: boolean }>;

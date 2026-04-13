@@ -145,6 +145,20 @@ fn stop_all_sessions(manager: State<'_, SessionManager>) -> Result<serde_json::V
 }
 
 #[tauri::command]
+fn log_renderer_event(
+    manager: State<'_, SessionManager>,
+    level: String,
+    source: String,
+    message: String,
+    terminal_id: Option<String>,
+    detail: Option<String>,
+    stack: Option<String>,
+) -> Result<serde_json::Value, String> {
+    manager.log_renderer_event(level, source, message, terminal_id, detail, stack);
+    Ok(serde_json::json!({ "ok": true }))
+}
+
+#[tauri::command]
 fn window_close(
     manager: State<'_, SessionManager>,
     window: WebviewWindow,
@@ -155,13 +169,17 @@ fn window_close(
 }
 
 pub fn run() {
-    tauri::Builder::default()
+    let context = tauri::generate_context!();
+    let fallback_app_data_dir =
+        diagnostics::default_app_data_dir(context.config().identifier.as_str());
+    diagnostics::configure_app_logging(fallback_app_data_dir.clone());
+
+    let run_result = tauri::Builder::default()
         .setup(|app| {
-            let metadata_path = app
-                .path()
-                .app_data_dir()
-                .map_err(|error| error.to_string())?
-                .join("terminal-metadata.json");
+            let app_data_dir = app.path().app_data_dir().map_err(|error| error.to_string())?;
+            diagnostics::configure_app_logging(app_data_dir.clone());
+
+            let metadata_path = app_data_dir.join("terminal-metadata.json");
 
             if let Some(parent) = metadata_path.parent() {
                 std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
@@ -188,8 +206,22 @@ pub fn run() {
             window_minimize,
             window_maximize,
             stop_all_sessions,
+            log_renderer_event,
             window_close,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Tauri application");
+        .run(context);
+
+    if let Err(error) = run_result {
+        let detail = error.to_string();
+        let _ = diagnostics::append_app_log_entry(
+            &fallback_app_data_dir,
+            "fatal",
+            "tauri_run",
+            "The Tauri runtime exited with an error.",
+            None,
+            Some(&detail),
+            None,
+        );
+        eprintln!("Terminal Window Manager Tauri failed: {}", detail);
+    }
 }

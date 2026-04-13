@@ -922,11 +922,32 @@ input {
 	display: block;
 }
 
+.terminal-pane.failed {
+	display: block;
+}
+
 .terminal-surface {
 	width: 100%;
 	height: 100%;
 	-webkit-font-smoothing: antialiased;
 	-moz-osx-font-smoothing: grayscale;
+}
+
+.terminal-pane-failure {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 100%;
+	height: 100%;
+	padding: 20px;
+	border: 1px solid rgba(255, 123, 114, 0.28);
+	border-radius: 8px;
+	background: linear-gradient(180deg, rgba(46, 17, 17, 0.92), rgba(25, 12, 12, 0.96));
+	color: #ffb3ad;
+	font-size: 0.88rem;
+	line-height: 1.5;
+	white-space: pre-wrap;
+	text-align: left;
 }
 
 .secondary-button {

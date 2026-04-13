@@ -65,6 +65,15 @@ function createRpcBridge(): TerminalManagerRpc {
 					}),
 				setProjectDefaultCwd: ({ projectId, cwd }) =>
 					invoke<AppState>("set_project_default_cwd", { projectId, cwd }),
+				logRendererEvent: ({ level, source, message, terminalId, detail, stack }) =>
+					invoke<{ ok: boolean }>("log_renderer_event", {
+						level,
+						source,
+						message,
+						terminalId,
+						detail,
+						stack,
+					}),
 				windowMinimize: () => invoke<{ ok: boolean }>("window_minimize"),
 				windowMaximize: () => invoke<{ ok: boolean }>("window_maximize"),
 				windowClose: () => invoke<{ ok: boolean }>("window_close"),

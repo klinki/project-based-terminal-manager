@@ -19,67 +19,80 @@ const rpc = Electroview.defineRPC<TerminalManagerRpc>({
 		requests: {},
 		messages: {
 			stateChanged: (nextState) => {
-				state = nextState;
-				reconcileSelection();
-				reconcileSidebarState();
-				pruneTerminalViews();
-				renderTree();
-				renderInspector();
-				renderStatusBoard();
+				safelyHandleRendererEvent("state-changed", () => {
+					state = nextState;
+					reconcileSelection();
+					reconcileSidebarState();
+					pruneTerminalViews();
+					renderTree();
+					renderInspector();
+					renderStatusBoard();
+				});
 			},
 			terminalOutput: ({ terminalId, dataBase64 }) => {
-				const terminalView = ensureTerminalView(terminalId);
-				terminalView.terminal.write(decodeBase64(dataBase64));
+				safelyHandleTerminalViewEvent(terminalId, "terminal-output", (terminalView) => {
+					terminalView.terminal.write(decodeBase64(dataBase64));
+				});
 			},
 			terminalStarted: ({ terminalId }) => {
-				const terminalView = ensureTerminalView(terminalId);
-				terminalView.terminal.focus();
+				safelyHandleTerminalViewEvent(terminalId, "terminal-started", (terminalView) => {
+					terminalView.terminal.focus();
+				});
 			},
 			terminalExit: ({ terminalId, exitCode }) => {
-				const terminalView = ensureTerminalView(terminalId);
-				terminalView.terminal.writeln(
-					`\r\n[session exited with code ${exitCode ?? "unknown"}]`,
-				);
-				const terminal = state.terminals.find(
-					(candidate) => candidate.id === terminalId,
-				);
-				if (terminal) {
-					setStatus(
-						`Console '${terminal.name}' exited with code ${exitCode ?? "unknown"}.`,
+				safelyHandleTerminalViewEvent(terminalId, "terminal-exit", (terminalView) => {
+					terminalView.terminal.writeln(
+						`\r\n[session exited with code ${exitCode ?? "unknown"}]`,
 					);
-				}
+					const terminal = state.terminals.find(
+						(candidate) => candidate.id === terminalId,
+					);
+					if (terminal) {
+						setStatus(
+							`Console '${terminal.name}' exited with code ${exitCode ?? "unknown"}.`,
+						);
+					}
+				});
 			},
 			terminalError: ({ terminalId, message }) => {
-				const terminalView = ensureTerminalView(terminalId);
-				terminalView.terminal.writeln(`\r\n[error] ${message}`);
-				const terminal = state.terminals.find(
-					(candidate) => candidate.id === terminalId,
-				);
-				if (terminal) {
-					setStatus(`Console '${terminal.name}' reported an error.`);
-				}
+				safelyHandleTerminalViewEvent(terminalId, "terminal-error", (terminalView) => {
+					terminalView.terminal.writeln(`\r\n[error] ${message}`);
+					const terminal = state.terminals.find(
+						(candidate) => candidate.id === terminalId,
+					);
+					if (terminal) {
+						setStatus(`Console '${terminal.name}' reported an error.`);
+					}
+				});
 			},
 			terminalDiagnosticNotice: ({ terminalId, message }) => {
-				const terminalView = ensureTerminalView(terminalId);
-				terminalView.terminal.writeln(`\r\n[diagnostic] ${message}`);
-				const terminal = state.terminals.find(
-					(candidate) => candidate.id === terminalId,
+				safelyHandleTerminalViewEvent(
+					terminalId,
+					"terminal-diagnostic-notice",
+					(terminalView) => {
+						terminalView.terminal.writeln(`\r\n[diagnostic] ${message}`);
+						const terminal = state.terminals.find(
+							(candidate) => candidate.id === terminalId,
+						);
+						if (terminal) {
+							setStatus(`Console '${terminal.name}': ${message}`);
+						}
+					},
 				);
-				if (terminal) {
-					setStatus(`Console '${terminal.name}': ${message}`);
-				}
 			},
 			terminalProgress: ({ terminalId, progressInfo, activity }) => {
-				const terminal = state.terminals.find(
-					(candidate) => candidate.id === terminalId,
-				);
-				if (!terminal) {
-					return;
-				}
+				safelyHandleRendererEvent("terminal-progress", () => {
+					const terminal = state.terminals.find(
+						(candidate) => candidate.id === terminalId,
+					);
+					if (!terminal) {
+						return;
+					}
 
-				terminal.progressInfo = progressInfo;
-				terminal.activity = activity;
-				scheduleProgressRender();
+					terminal.progressInfo = progressInfo;
+					terminal.activity = activity;
+					scheduleProgressRender();
+				}, { terminalId });
 			},
 		},
 	},
@@ -101,6 +114,16 @@ type TerminalView = {
 	fitAddon: FitAddon;
 	wrapper: HTMLDivElement;
 	surface: HTMLDivElement;
+	failureNotice: HTMLDivElement;
+	failed: boolean;
+	failureMessage: string | null;
+};
+
+type RendererIssueOptions = {
+	terminalId?: string | null;
+	detail?: string | null;
+	stack?: string | null;
+	updateStatus?: boolean;
 };
 
 type SettingsDialogResult = {
@@ -171,6 +194,199 @@ function getRendererRpc() {
 	}
 
 	return rendererRpc;
+}
+
+function describeRendererError(error: unknown): { message: string; stack: string | null } {
+	if (error instanceof Error) {
+		return {
+			message: error.message,
+			stack: error.stack ?? null,
+		};
+	}
+
+	return {
+		message: String(error),
+		stack: null,
+	};
+}
+
+async function writeRendererLog(
+	level: string,
+	source: string,
+	message: string,
+	options: RendererIssueOptions = {},
+): Promise<void> {
+	try {
+		await electroview.rpc.proxy.request.logRendererEvent({
+			level,
+			source,
+			message,
+			terminalId: options.terminalId ?? null,
+			detail: options.detail ?? null,
+			stack: options.stack ?? null,
+		});
+	} catch (error) {
+		console.error("Failed to persist renderer log", error);
+	}
+}
+
+function reportRendererIssue(
+	level: string,
+	source: string,
+	error: unknown,
+	options: RendererIssueOptions = {},
+): string {
+	const { message, stack } = describeRendererError(error);
+	console.error(`[${source}] ${message}`, error);
+	void writeRendererLog(level, source, message, {
+		...options,
+		stack: options.stack ?? stack,
+	});
+
+	if (options.updateStatus !== false) {
+		setStatus(`Renderer issue in ${source}: ${message}`);
+	}
+
+	return message;
+}
+
+function safelyHandleRendererEvent(
+	source: string,
+	handler: () => void,
+	options: RendererIssueOptions = {},
+): void {
+	try {
+		handler();
+	} catch (error) {
+		reportRendererIssue("error", source, error, options);
+	}
+}
+
+function safelyHandleTerminalViewEvent(
+	terminalId: string,
+	source: string,
+	handler: (terminalView: TerminalView) => void,
+): void {
+	let terminalView = terminalViews.get(terminalId);
+	try {
+		terminalView = ensureTerminalView(terminalId);
+	} catch (error) {
+		reportRendererIssue("error", source, error, {
+			terminalId,
+			detail: "Failed to resolve the terminal pane before handling an event.",
+		});
+		return;
+	}
+
+	performTerminalViewAction(terminalId, terminalView, source, handler);
+}
+
+function performTerminalViewAction(
+	terminalId: string,
+	terminalView: TerminalView,
+	source: string,
+	action: (terminalView: TerminalView) => void,
+): boolean {
+	if (terminalView.failed) {
+		return false;
+	}
+
+	try {
+		action(terminalView);
+		return true;
+	} catch (error) {
+		markTerminalViewFailed(terminalId, terminalView, source, error);
+		return false;
+	}
+}
+
+function markTerminalViewFailed(
+	terminalId: string,
+	terminalView: TerminalView,
+	source: string,
+	error: unknown,
+): void {
+	const message = reportRendererIssue("error", source, error, {
+		terminalId,
+		detail: "A terminal pane action threw and the pane was degraded to keep the app alive.",
+		updateStatus: false,
+	});
+
+	try {
+		terminalView.terminal.dispose();
+	} catch (disposeError) {
+		console.warn("Failed to dispose a broken terminal view", disposeError);
+	}
+
+	terminalView.failed = true;
+	terminalView.failureMessage =
+		`This terminal pane failed during ${source}. Use Restart console to recover it.\n\n${message}`;
+	terminalView.wrapper.classList.add("failed");
+	terminalView.failureNotice.textContent = terminalView.failureMessage;
+	terminalView.failureNotice.hidden = false;
+	terminalView.surface.replaceChildren(terminalView.failureNotice);
+
+	const terminal = state.terminals.find((candidate) => candidate.id === terminalId);
+	setStatus(
+		terminal
+			? `Console '${terminal.name}' encountered a pane error. Use Restart console to recover.`
+			: "A terminal pane failed. Use Restart console to recover it.",
+	);
+	renderInspector();
+	renderStatusBoard();
+}
+
+function initializeTerminalView(terminalView: TerminalView, terminalId: string): void {
+	terminalView.surface.replaceChildren();
+	terminalView.wrapper.classList.remove("failed");
+	terminalView.failureNotice.hidden = true;
+	terminalView.failureMessage = null;
+	terminalView.failed = false;
+
+	const terminal = new Terminal({
+		allowTransparency: false,
+		cursorBlink: true,
+		fontFamily: 'Cascadia Mono, Consolas, "Courier New", monospace',
+		fontSize: 13,
+		fontWeight: "400",
+		fontWeightBold: "700",
+		letterSpacing: 0,
+		lineHeight: 1,
+		scrollback: 5000,
+		theme: {
+			background: "#0c0f14",
+			foreground: "#e6edf3",
+			cursor: "#5ea0ff",
+			selectionBackground: "rgba(94, 160, 255, 0.28)",
+		},
+	});
+
+	const fitAddon = new FitAddon();
+	terminal.loadAddon(fitAddon);
+	terminal.open(terminalView.surface);
+	terminal.onData((data) => {
+		void getRendererRpc()
+			.proxy.request.sendInput({ terminalId, data })
+			.catch((error) => {
+				reportRendererIssue("warn", "send-input", error, {
+					terminalId,
+					detail: "Failed to forward interactive terminal input to the backend.",
+					updateStatus: false,
+				});
+			});
+	});
+
+	terminalView.terminal = terminal;
+	terminalView.fitAddon = fitAddon;
+}
+
+function recoverTerminalView(terminalId: string): TerminalView {
+	const terminalView = ensureTerminalView(terminalId);
+	if (terminalView.failed) {
+		initializeTerminalView(terminalView, terminalId);
+	}
+
+	return terminalView;
 }
 
 app.innerHTML = `
@@ -788,24 +1004,38 @@ sidebarContextMenu.addEventListener("click", (event) => {
 	}
 });
 
-restartTerminalButton.addEventListener("click", async () => {
-	const selectedTerminal = getSelectedTerminal();
-	if (!selectedTerminal) {
-		return;
-	}
+restartTerminalButton.addEventListener("click", () => {
+	void runUiAction("Restart console", async () => {
+		const selectedTerminal = getSelectedTerminal();
+		if (!selectedTerminal) {
+			return;
+		}
 
-	const terminalView = ensureTerminalView(selectedTerminal.id);
-	showTerminalView(selectedTerminal.id, false);
-	terminalView.fitAddon.fit();
-	state = await getRendererRpc().proxy.request.restartTerminal({
-		terminalId: selectedTerminal.id,
-		cols: terminalView.terminal.cols,
-		rows: terminalView.terminal.rows,
+		const terminalView = recoverTerminalView(selectedTerminal.id);
+		showTerminalView(selectedTerminal.id, false);
+		if (
+			!performTerminalViewAction(
+				selectedTerminal.id,
+				terminalView,
+				"restart-console-fit",
+				(currentTerminalView) => {
+					currentTerminalView.fitAddon.fit();
+				},
+			)
+		) {
+			return;
+		}
+
+		state = await getRendererRpc().proxy.request.restartTerminal({
+			terminalId: selectedTerminal.id,
+			cols: terminalView.terminal.cols,
+			rows: terminalView.terminal.rows,
+		});
+		renderTree();
+		renderInspector();
+		renderStatusBoard();
+		setStatus(`Restarted '${selectedTerminal.name}'.`);
 	});
-	renderTree();
-	renderInspector();
-	renderStatusBoard();
-	setStatus(`Restarted '${selectedTerminal.name}'.`);
 });
 
 setProjectDefaultCwdButton.addEventListener("click", () => {
@@ -880,14 +1110,31 @@ settingsDialog.addEventListener("close", () => {
 	);
 });
 
+window.addEventListener("error", (event) => {
+	const detail = `${event.filename}:${event.lineno}:${event.colno}`;
+	const error =
+		event.error instanceof Error ? event.error : new Error(event.message || "Unknown error");
+	reportRendererIssue("error", "window.error", error, {
+		detail,
+	});
+});
+
+window.addEventListener("unhandledrejection", (event) => {
+	reportRendererIssue("error", "window.unhandledrejection", event.reason, {
+		detail: "Unhandled promise rejection",
+	});
+});
+
 void (async () => {
 	try {
 		await Electroview.ready;
 		await bootstrap();
 	} catch (error: unknown) {
-		const message = error instanceof Error ? error.message : String(error);
+		const message = reportRendererIssue("error", "startup", error, {
+			detail: "The renderer failed during startup.",
+			updateStatus: false,
+		});
 		setStatus(`Startup failed: ${message}`);
-		throw error;
 	}
 })();
 
@@ -1593,7 +1840,15 @@ async function selectTerminal(terminalId: string): Promise<void> {
 	selection = { kind: "terminal", id: terminalRecord.id };
 	const terminalView = ensureTerminalView(terminalRecord.id);
 	showTerminalView(terminalRecord.id, false);
-	terminalView.fitAddon.fit();
+	if (
+		!performTerminalViewAction(terminalRecord.id, terminalView, "activate-terminal-fit", (
+			currentTerminalView,
+		) => {
+			currentTerminalView.fitAddon.fit();
+		})
+	) {
+		throw new Error("The terminal pane could not be prepared for activation.");
+	}
 
 	state = await getRendererRpc().proxy.request.activateTerminal({
 		terminalId: terminalRecord.id,
@@ -1878,7 +2133,15 @@ function pruneTerminalViews(): void {
 			continue;
 		}
 
-		terminalView.terminal.dispose();
+		try {
+			terminalView.terminal.dispose();
+		} catch (error) {
+			reportRendererIssue("warn", "prune-terminal-view", error, {
+				terminalId,
+				detail: "Failed to dispose an inactive terminal pane during cleanup.",
+				updateStatus: false,
+			});
+		}
 		terminalView.wrapper.remove();
 		terminalViews.delete(terminalId);
 	}
@@ -1899,38 +2162,19 @@ function ensureTerminalView(terminalId: string): TerminalView {
 	wrapper.append(surface);
 	terminalStack.append(wrapper);
 
-	const terminal = new Terminal({
-		allowTransparency: false,
-		cursorBlink: true,
-		fontFamily: 'Cascadia Mono, Consolas, "Courier New", monospace',
-		fontSize: 13,
-		fontWeight: "400",
-		fontWeightBold: "700",
-		letterSpacing: 0,
-		lineHeight: 1,
-		scrollback: 5000,
-		theme: {
-			background: "#0c0f14",
-			foreground: "#e6edf3",
-			cursor: "#5ea0ff",
-			selectionBackground: "rgba(94, 160, 255, 0.28)",
-		},
-	});
-
-	const fitAddon = new FitAddon();
-	terminal.loadAddon(fitAddon);
-	terminal.open(surface);
-	terminal.onData((data) => {
-		void getRendererRpc().proxy.request.sendInput({ terminalId, data });
-	});
-
 	const terminalView: TerminalView = {
-		terminal,
-		fitAddon,
+		terminal: null as unknown as Terminal,
+		fitAddon: null as unknown as FitAddon,
 		wrapper,
 		surface,
+		failureNotice: document.createElement("div"),
+		failed: false,
+		failureMessage: null,
 	};
+	terminalView.failureNotice.className = "terminal-pane-failure";
+	terminalView.failureNotice.hidden = true;
 
+	initializeTerminalView(terminalView, terminalId);
 	terminalViews.set(terminalId, terminalView);
 	return terminalView;
 }
@@ -1948,15 +2192,33 @@ function showTerminalView(terminalId: string, notifyBackend = true): void {
 	}
 
 	requestAnimationFrame(() => {
-		selected.fitAddon.fit();
-		if (notifyBackend) {
-			void getRendererRpc().proxy.request.resizeTerminal({
-				terminalId,
-				cols: selected.terminal.cols,
-				rows: selected.terminal.rows,
-			});
+		if (
+			!performTerminalViewAction(terminalId, selected, "show-terminal-fit", (terminalView) => {
+				terminalView.fitAddon.fit();
+			})
+		) {
+			return;
 		}
-		selected.terminal.focus();
+
+		if (notifyBackend) {
+			void getRendererRpc()
+				.proxy.request.resizeTerminal({
+					terminalId,
+					cols: selected.terminal.cols,
+					rows: selected.terminal.rows,
+				})
+				.catch((error) => {
+					reportRendererIssue("warn", "resize-terminal", error, {
+						terminalId,
+						detail: "Failed to synchronize terminal dimensions with the backend.",
+						updateStatus: false,
+					});
+				});
+		}
+
+		performTerminalViewAction(terminalId, selected, "show-terminal-focus", (terminalView) => {
+			terminalView.terminal.focus();
+		});
 	});
 }
 
@@ -2170,7 +2432,18 @@ function scheduleSelectedTerminalLayoutSync(): void {
 
 		const previousCols = terminalView.terminal.cols;
 		const previousRows = terminalView.terminal.rows;
-		terminalView.fitAddon.fit();
+		if (
+			!performTerminalViewAction(
+				selectedTerminal.id,
+				terminalView,
+				"layout-sync-fit",
+				(currentTerminalView) => {
+					currentTerminalView.fitAddon.fit();
+				},
+			)
+		) {
+			return;
+		}
 
 		if (
 			(previousCols !== terminalView.terminal.cols ||
@@ -2178,11 +2451,19 @@ function scheduleSelectedTerminalLayoutSync(): void {
 			(selectedTerminal.status === "running" ||
 				selectedTerminal.status === "starting")
 		) {
-			void getRendererRpc().proxy.request.resizeTerminal({
-				terminalId: selectedTerminal.id,
-				cols: terminalView.terminal.cols,
-				rows: terminalView.terminal.rows,
-			});
+			void getRendererRpc()
+				.proxy.request.resizeTerminal({
+					terminalId: selectedTerminal.id,
+					cols: terminalView.terminal.cols,
+					rows: terminalView.terminal.rows,
+				})
+				.catch((error) => {
+					reportRendererIssue("warn", "layout-sync-resize", error, {
+						terminalId: selectedTerminal.id,
+						detail: "Failed to synchronize selected terminal dimensions after a layout change.",
+						updateStatus: false,
+					});
+				});
 		}
 	});
 }

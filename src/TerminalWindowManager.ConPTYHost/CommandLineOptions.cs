@@ -47,14 +47,25 @@ internal sealed record CommandLineOptions(
             !string.IsNullOrWhiteSpace(rawSessionId)
             ? rawSessionId.Trim()
             : Guid.NewGuid().ToString();
+        var diagnosticsLogPath = values.TryGetValue("events-path", out var rawEventsPath) &&
+            !string.IsNullOrWhiteSpace(rawEventsPath)
+            ? Path.GetFullPath(rawEventsPath)
+            : null;
         var diagnosticsDirectory = values.TryGetValue("diagnostics-dir", out var rawDiagnosticsDirectory) &&
             !string.IsNullOrWhiteSpace(rawDiagnosticsDirectory)
             ? Path.GetFullPath(rawDiagnosticsDirectory)
-            : Path.Combine(workingDirectory, ".twm-diagnostics", sessionId);
+            : diagnosticsLogPath is not null
+                ? Path.GetDirectoryName(diagnosticsLogPath)
+                : Path.Combine(workingDirectory, ".twm-diagnostics", sessionId);
+
+        if (string.IsNullOrWhiteSpace(diagnosticsDirectory))
+        {
+            throw new ArgumentException("A valid diagnostics directory could not be resolved.");
+        }
 
         Directory.CreateDirectory(diagnosticsDirectory);
 
-        var diagnosticsLogPath = Path.Combine(diagnosticsDirectory, "events.jsonl");
+        diagnosticsLogPath ??= Path.Combine(diagnosticsDirectory, "events.jsonl");
         var powerShellBootstrapPath = values.TryGetValue("powershell-bootstrap", out var rawBootstrapPath) &&
             !string.IsNullOrWhiteSpace(rawBootstrapPath)
             ? Path.GetFullPath(rawBootstrapPath)

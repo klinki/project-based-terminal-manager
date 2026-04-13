@@ -13,8 +13,8 @@ use serde_json::Value;
 use tauri::{path::BaseDirectory, AppHandle, Emitter, Manager};
 
 use crate::diagnostics::{
-    append_output_chunk, create_power_shell_bootstrap_script, create_recent_output_excerpt,
-    create_session_diagnostics_paths, SessionDiagnosticsPaths,
+    append_app_log_entry, append_output_chunk, create_power_shell_bootstrap_script,
+    create_recent_output_excerpt, create_session_diagnostics_paths, SessionDiagnosticsPaths,
 };
 use crate::models::{
     AppState, ProjectRecord, TerminalActivity, TerminalActivityPhase, TerminalCommandFailure,
@@ -532,6 +532,25 @@ impl SessionManager {
         Ok(())
     }
 
+    pub fn log_renderer_event(
+        &self,
+        level: String,
+        source: String,
+        message: String,
+        terminal_id: Option<String>,
+        detail: Option<String>,
+        stack: Option<String>,
+    ) {
+        self.log_app_event(
+            &level,
+            &source,
+            &message,
+            terminal_id.as_deref(),
+            detail.as_deref(),
+            stack.as_deref(),
+        );
+    }
+
     fn ensure_session(&self, terminal_id: &str, cols: u32, rows: u32) -> Result<(), String> {
         let existing_session = {
             let sessions = self.sessions.lock().map_err(|error| error.to_string())?;
@@ -735,11 +754,27 @@ impl SessionManager {
             for line in reader.lines() {
                 match line {
                     Ok(line) => {
-                        let _ = manager_for_stdout.handle_helper_line(
+                        if let Err(error) = manager_for_stdout.handle_helper_line(
                             &terminal_for_stdout,
                             &live_session_for_stdout,
                             &line,
-                        );
+                        ) {
+                            manager_for_stdout.log_app_event(
+                                "error",
+                                "helper_stdout",
+                                &error,
+                                Some(&terminal_for_stdout.id),
+                                Some(&line),
+                                None,
+                            );
+                            let _ = manager_for_stdout.report_terminal_local_fault(
+                                &terminal_for_stdout,
+                                &live_session_for_stdout,
+                                error,
+                                "HelperOutputProcessingError",
+                            );
+                            break;
+                        }
                     }
                     Err(error) => {
                         let _ = manager_for_stdout.handle_child_process_error(
@@ -887,13 +922,29 @@ impl SessionManager {
                 )
             };
 
-            let _ = self.read_session_diagnostics_events(
+            if let Err(error) = self.read_session_diagnostics_events(
                 &terminal,
                 &live_session,
                 &events_path,
                 &mut diagnostics_read_offset,
                 &mut pending_diagnostics_line,
-            );
+            ) {
+                self.log_app_event(
+                    "error",
+                    "session_diagnostics",
+                    &error,
+                    Some(&terminal.id),
+                    Some(&events_path.display().to_string()),
+                    None,
+                );
+                let _ = self.report_terminal_local_fault(
+                    &terminal,
+                    &live_session,
+                    error,
+                    "SessionDiagnosticsReadError",
+                );
+                return;
+            }
 
             if closed || stopped || received_exit || received_error {
                 return;
@@ -1169,6 +1220,18 @@ impl SessionManager {
             self.get_helper_stderr_excerpt_locked(&session)
         };
 
+        self.log_app_event(
+            "error",
+            "terminal_session",
+            &event.message,
+            Some(&terminal.id),
+            event
+                .diagnostic_log_path
+                .as_deref()
+                .or(terminal.diagnostic_log_path.as_deref()),
+            stderr_excerpt.as_deref(),
+        );
+
         {
             let mut state = self.state.lock().map_err(|error| error.to_string())?;
             if let Some(record) = state
@@ -1292,6 +1355,30 @@ impl SessionManager {
                 message,
                 diagnostic_log_path: terminal.diagnostic_log_path.clone(),
                 exception_type: Some("ChildProcessError".to_string()),
+                hresult: None,
+                win32_error_code: None,
+                occurred_at: now_iso_string(),
+                shell_path: Some(terminal.shell.clone()),
+                shell_pid: None,
+            },
+        )
+    }
+
+    fn report_terminal_local_fault(
+        &self,
+        terminal: &TerminalRecord,
+        live_session: &Arc<Mutex<LiveSession>>,
+        message: String,
+        exception_type: &str,
+    ) -> Result<(), String> {
+        self.handle_helper_error(
+            terminal,
+            live_session,
+            HelperErrorEvent {
+                session_id: None,
+                message,
+                diagnostic_log_path: terminal.diagnostic_log_path.clone(),
+                exception_type: Some(exception_type.to_string()),
                 hresult: None,
                 win32_error_code: None,
                 occurred_at: now_iso_string(),
@@ -1710,6 +1797,26 @@ impl SessionManager {
         let _ = self.app_handle.emit(name, payload);
     }
 
+    fn log_app_event(
+        &self,
+        level: &str,
+        source: &str,
+        message: &str,
+        terminal_id: Option<&str>,
+        detail: Option<&str>,
+        stack: Option<&str>,
+    ) {
+        let _ = append_app_log_entry(
+            &self.app_data_dir,
+            level,
+            source,
+            message,
+            terminal_id,
+            detail,
+            stack,
+        );
+    }
+
     fn snapshot_state(&self) -> AppState {
         self.state
             .lock()
@@ -1911,6 +2018,14 @@ impl SessionManager {
         }
 
         self.persist_and_emit_state()?;
+        self.log_app_event(
+            "error",
+            "launch_failure",
+            &message,
+            Some(&terminal.id),
+            terminal.diagnostic_log_path.as_deref(),
+            None,
+        );
         self.emit_event(
             "terminal-error",
             serde_json::json!({
