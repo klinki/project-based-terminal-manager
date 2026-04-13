@@ -1,7 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Terminal Window Manager Tauri",
-  "version": "0.0.1",
   "identifier": "dev.projectwm.twm-tauri",
   "build": {
     "beforeDevCommand": "bun run hmr",

@@ -6,6 +6,13 @@
     "src/TerminalWindowManager.Tauri": {
       "release-type": "node",
       "package-name": "terminal-window-manager-tauri",
+      "extra-files": [
+        {
+          "type": "toml",
+          "path": "src/TerminalWindowManager.Tauri/src-tauri/Cargo.toml",
+          "jsonpath": "$.package.version"
+        }
+      ],
       "initial-version": "0.0.1"
     }
   }

@@ -7,7 +7,11 @@ const outputDir = resolve(projectDir, "src", "mainview", "public");
 const outputPath = resolve(outputDir, "build-info.json");
 
 const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8"));
-const version = typeof packageJson.version === "string" ? packageJson.version : "0.0.0";
+const version = typeof packageJson.version === "string" ? packageJson.version : null;
+
+if (!version) {
+	throw new Error(`Could not determine the package version from ${packageJsonPath}.`);
+}
 const buildDate = new Date().toISOString();
 
 const output = `${JSON.stringify(
