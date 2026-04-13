@@ -15,8 +15,6 @@ jobs:
   release_please:
     runs-on: ubuntu-latest
     outputs:
-      electrobun_release_created: ${{ steps.release.outputs['src/TerminalWindowManager.ElectroBun--release_created'] }}
-      electrobun_tag_name: ${{ steps.release.outputs['src/TerminalWindowManager.ElectroBun--tag_name'] }}
       tauri_release_created: ${{ steps.release.outputs['src/TerminalWindowManager.Tauri--release_created'] }}
       tauri_tag_name: ${{ steps.release.outputs['src/TerminalWindowManager.Tauri--tag_name'] }}
     steps:
@@ -26,45 +24,6 @@ jobs:
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
-
-  windows_release_electrobun:
-    name: Build and upload ElectroBun Windows release
-    needs: release_please
-    if: ${{ needs.release_please.outputs.electrobun_release_created == 'true' }}
-    runs-on: windows-latest
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.release_please.outputs.electrobun_tag_name }}
-
-      - name: Set up .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 10.0.x
-
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
-      - name: Build the ElectroBun Windows release package
-        shell: pwsh
-        run: .\build.ps1 -Target Desktop-ElectroBun -ForceFrontendInstall
-
-      - name: Upload ElectroBun release artifacts
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          $artifactDir = "src\TerminalWindowManager.ElectroBun\artifacts"
-          $artifacts = Get-ChildItem -Path $artifactDir -Filter "stable-win-x64-*" | Sort-Object Name | Select-Object -ExpandProperty FullName
-
-          if (-not $artifacts) {
-            throw "No ElectroBun Windows release artifacts were produced in '$artifactDir'."
-          }
-
-          gh release upload "${{ needs.release_please.outputs.electrobun_tag_name }}" $artifacts --clobber
 
   windows_release_tauri:
     name: Build and upload Tauri Windows release
