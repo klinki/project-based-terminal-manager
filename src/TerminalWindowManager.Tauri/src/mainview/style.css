@@ -1185,6 +1185,51 @@ input {
 	line-height: 1.5;
 }
 
+.settings-build-info {
+	display: grid;
+	gap: 8px;
+	padding-top: 4px;
+	border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.settings-build-info-header {
+	font-size: 0.7rem;
+	text-transform: uppercase;
+	letter-spacing: 0.08em;
+	color: var(--muted);
+	font-weight: 600;
+}
+
+.settings-build-info-grid {
+	margin: 0;
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 10px;
+}
+
+.settings-build-info-item {
+	display: grid;
+	gap: 4px;
+	padding: 8px 10px;
+	border-radius: 8px;
+	background: rgba(255, 255, 255, 0.02);
+	border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.settings-build-info-item dt {
+	font-size: 0.68rem;
+	text-transform: uppercase;
+	letter-spacing: 0.08em;
+	color: var(--muted);
+}
+
+.settings-build-info-item dd {
+	margin: 0;
+	font-size: 0.86rem;
+	color: var(--text);
+	word-break: break-word;
+}
+
 @keyframes activity-ring {
 	0% {
 		transform: scale(0.8);

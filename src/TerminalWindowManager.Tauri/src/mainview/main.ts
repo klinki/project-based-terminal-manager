@@ -109,6 +109,11 @@ type SettingsDialogResult = {
 	customShells: string[];
 };
 
+type AppBuildInfo = {
+	version: string;
+	buildDate: string;
+};
+
 type TitlebarDragState = {
 	pointerId: number;
 	startX: number;
@@ -147,6 +152,10 @@ let pendingConfirmResolve: ((confirmed: boolean) => void) | null = null;
 let pendingRenameResolve: ((value: string | null) => void) | null = null;
 let pendingSettingsResolve: ((value: SettingsDialogResult | null) => void) | null =
 	null;
+let appBuildInfo: AppBuildInfo = {
+	version: "Unknown",
+	buildDate: "",
+};
 let settingsDialogCustomShells: string[] = [];
 let settingsShellMenuOpen = false;
 let lastRenderedTreeMarkup = "";
@@ -347,6 +356,19 @@ app.innerHTML = `
 					</div>
 					<span class="settings-hint">Choose pwsh.exe, cmd.exe, or type another executable or full path. Saved custom shells appear here and can be removed.</span>
 				</label>
+				<div class="settings-build-info" aria-label="Build information">
+					<div class="settings-build-info-header">Build info</div>
+					<dl class="settings-build-info-grid">
+						<div class="settings-build-info-item">
+							<dt>Version</dt>
+							<dd id="settings-build-version">Loading...</dd>
+						</div>
+						<div class="settings-build-info-item">
+							<dt>Built</dt>
+							<dd id="settings-build-date">Loading...</dd>
+						</div>
+					</dl>
+				</div>
 				<div class="confirm-dialog-actions">
 					<button class="secondary-button" value="cancel">Cancel</button>
 					<button id="settings-dialog-save" class="primary-button" value="confirm">Save</button>
@@ -414,6 +436,9 @@ const settingsShellToggle =
 	queryHtmlElement<HTMLButtonElement>("settings-shell-toggle");
 const settingsShellMenu =
 	queryHtmlElement<HTMLDivElement>("settings-shell-menu");
+const settingsBuildVersion =
+	queryHtmlElement<HTMLElement>("settings-build-version");
+const settingsBuildDate = queryHtmlElement<HTMLElement>("settings-build-date");
 const winMinimize = queryHtmlElement<HTMLButtonElement>("win-minimize");
 const winMaximize = queryHtmlElement<HTMLButtonElement>("win-maximize");
 const winClose = queryHtmlElement<HTMLButtonElement>("win-close");
@@ -867,6 +892,7 @@ void (async () => {
 })();
 
 async function bootstrap(): Promise<void> {
+	appBuildInfo = await loadBuildInfo();
 	state = await getRendererRpc().proxy.request.getInitialState({});
 	reconcileSelection();
 	reconcileSidebarState();
@@ -1158,6 +1184,10 @@ function showSettingsDialog(options: SettingsDialogResult): Promise<SettingsDial
 
 	settingsDialogInputCwd.value = options.defaultCwd;
 	settingsDialogInputShell.value = options.defaultShell;
+	settingsBuildVersion.textContent = appBuildInfo.version;
+	settingsBuildDate.textContent = appBuildInfo.buildDate
+		? formatBuildDate(appBuildInfo.buildDate)
+		: "Unknown";
 	settingsDialogCustomShells = normalizeCustomShells(
 		options.customShells,
 		options.defaultShell,
@@ -2072,6 +2102,51 @@ function renderOptionalCodeBlock(value: string | null | undefined): string {
 	}
 
 	return `<pre class="metadata-pre">${escapeHtml(value)}</pre>`;
+}
+
+async function loadBuildInfo(): Promise<AppBuildInfo> {
+	try {
+		const response = await fetch("/build-info.json", { cache: "no-store" });
+		if (!response.ok) {
+			throw new Error(`HTTP ${response.status}`);
+		}
+
+		const payload = await response.json();
+		if (
+			typeof payload?.version !== "string" ||
+			typeof payload?.buildDate !== "string"
+		) {
+			throw new Error("Invalid build info payload.");
+		}
+
+		return {
+			version: payload.version,
+			buildDate: payload.buildDate,
+		};
+	} catch {
+		return {
+			version: "Unknown",
+			buildDate: "",
+		};
+	}
+}
+
+function formatBuildDate(buildDateIso: string): string {
+	const date = new Date(buildDateIso);
+	if (Number.isNaN(date.getTime())) {
+		return buildDateIso;
+	}
+
+	return date.toLocaleString(undefined, {
+		year: "numeric",
+		month: "short",
+		day: "2-digit",
+		hour: "2-digit",
+		minute: "2-digit",
+		second: "2-digit",
+		hour12: false,
+		timeZoneName: "short",
+	});
 }
 
 function scheduleSelectedTerminalLayoutSync(): void {

@@ -52,6 +52,7 @@ Thumbs.db
 # TerminalWindowManager.Tauri generated content
 src/TerminalWindowManager.Tauri/node_modules/
 src/TerminalWindowManager.Tauri/dist/
+src/TerminalWindowManager.Tauri/src/mainview/public/build-info.json
 src/TerminalWindowManager.Tauri/src-tauri/target/
 src/TerminalWindowManager.Tauri/src-tauri/gen/
 src/TerminalWindowManager.Tauri/src-tauri/permissions/*
