@@ -26,13 +26,15 @@ fn main() {
     };
 
     emit_rerun_if_changed(&helper_dir);
-    let dotnet_cli_home = manifest_dir.join("target").join(".dotnet-cli-home");
-    stage_conpty_host(
-        &helper_project,
-        &helper_resources_dir,
-        &dotnet_cli_home,
-        configuration,
-    );
+    if configuration == "Release" {
+        let dotnet_cli_home = manifest_dir.join("target").join(".dotnet-cli-home");
+        stage_conpty_host(
+            &helper_project,
+            &helper_resources_dir,
+            &dotnet_cli_home,
+            configuration,
+        );
+    }
     tauri_build::build();
 }
 

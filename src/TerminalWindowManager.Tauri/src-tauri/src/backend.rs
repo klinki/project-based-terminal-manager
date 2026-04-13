@@ -1703,66 +1703,8 @@ impl SessionManager {
             }
         };
 
-        if let Ok(resource_candidate) = app_handle.path().resolve(
-            "TerminalWindowManager.ConPTYHost/TerminalWindowManager.ConPTYHost.exe",
-            BaseDirectory::Resource,
-        ) {
-            push_candidate(resource_candidate);
-        }
-
-        if let Ok(resource_dir) = app_handle.path().resource_dir() {
-            push_candidate(
-                resource_dir
-                    .join("TerminalWindowManager.ConPTYHost")
-                    .join("TerminalWindowManager.ConPTYHost.exe"),
-            );
-        }
-
-        if let Ok(executable_dir) = app_handle.path().executable_dir() {
-            push_candidate(
-                executable_dir
-                    .join("resources")
-                    .join("TerminalWindowManager.ConPTYHost")
-                    .join("TerminalWindowManager.ConPTYHost.exe"),
-            );
-            push_candidate(
-                executable_dir
-                    .join("Resources")
-                    .join("TerminalWindowManager.ConPTYHost")
-                    .join("TerminalWindowManager.ConPTYHost.exe"),
-            );
-        }
-
         if let Ok(current_dir) = std::env::current_dir() {
             for search_root in current_dir.ancestors() {
-                push_candidate(
-                    search_root
-                        .join("resources")
-                        .join("TerminalWindowManager.ConPTYHost")
-                        .join("TerminalWindowManager.ConPTYHost.exe"),
-                );
-                push_candidate(
-                    search_root
-                        .join("Resources")
-                        .join("TerminalWindowManager.ConPTYHost")
-                        .join("TerminalWindowManager.ConPTYHost.exe"),
-                );
-                push_candidate(
-                    search_root
-                        .join("src-tauri")
-                        .join("resources")
-                        .join("TerminalWindowManager.ConPTYHost")
-                        .join("TerminalWindowManager.ConPTYHost.exe"),
-                );
-                push_candidate(
-                    search_root
-                        .join("src")
-                        .join("TerminalWindowManager.Tauri")
-                        .join("src-tauri")
-                        .join("resources")
-                        .join("TerminalWindowManager.ConPTYHost")
-                        .join("TerminalWindowManager.ConPTYHost.exe"),
-                );
                 push_candidate(
                     search_root
                         .join("TerminalWindowManager.ConPTYHost")
@@ -1794,7 +1736,66 @@ impl SessionManager {
                         .join("TerminalWindowManager.ConPTYHost")
                         .join("TerminalWindowManager.ConPTYHost.exe"),
                 );
+
+                push_candidate(
+                    search_root
+                        .join("resources")
+                        .join("TerminalWindowManager.ConPTYHost")
+                        .join("TerminalWindowManager.ConPTYHost.exe"),
+                );
+                push_candidate(
+                    search_root
+                        .join("Resources")
+                        .join("TerminalWindowManager.ConPTYHost")
+                        .join("TerminalWindowManager.ConPTYHost.exe"),
+                );
+                push_candidate(
+                    search_root
+                        .join("src-tauri")
+                        .join("resources")
+                        .join("TerminalWindowManager.ConPTYHost")
+                        .join("TerminalWindowManager.ConPTYHost.exe"),
+                );
+                push_candidate(
+                    search_root
+                        .join("src")
+                        .join("TerminalWindowManager.Tauri")
+                        .join("src-tauri")
+                        .join("resources")
+                        .join("TerminalWindowManager.ConPTYHost")
+                        .join("TerminalWindowManager.ConPTYHost.exe"),
+                );
             }
+        }
+
+        if let Ok(resource_candidate) = app_handle.path().resolve(
+            "TerminalWindowManager.ConPTYHost/TerminalWindowManager.ConPTYHost.exe",
+            BaseDirectory::Resource,
+        ) {
+            push_candidate(resource_candidate);
+        }
+
+        if let Ok(resource_dir) = app_handle.path().resource_dir() {
+            push_candidate(
+                resource_dir
+                    .join("TerminalWindowManager.ConPTYHost")
+                    .join("TerminalWindowManager.ConPTYHost.exe"),
+            );
+        }
+
+        if let Ok(executable_dir) = app_handle.path().executable_dir() {
+            push_candidate(
+                executable_dir
+                    .join("resources")
+                    .join("TerminalWindowManager.ConPTYHost")
+                    .join("TerminalWindowManager.ConPTYHost.exe"),
+            );
+            push_candidate(
+                executable_dir
+                    .join("Resources")
+                    .join("TerminalWindowManager.ConPTYHost")
+                    .join("TerminalWindowManager.ConPTYHost.exe"),
+            );
         }
 
         candidates
