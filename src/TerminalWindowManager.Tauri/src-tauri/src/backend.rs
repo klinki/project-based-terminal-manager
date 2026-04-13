@@ -28,6 +28,21 @@ const MAX_HELPER_STDERR_LINES: usize = 40;
 const MISSING_WORKING_DIRECTORY_PREFIX: &str = "Working directory '";
 const MISSING_WORKING_DIRECTORY_SUFFIX: &str = "' does not exist.";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TaskbarProgressStatus {
+    None,
+    Normal,
+    Indeterminate,
+    Paused,
+    Error,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TaskbarProgressSnapshot {
+    status: TaskbarProgressStatus,
+    progress: Option<u32>,
+}
+
 #[derive(Debug, Clone)]
 pub struct AppStateStore {
     metadata_path: PathBuf,
@@ -69,6 +84,7 @@ pub struct SessionManager {
     state: Arc<Mutex<AppState>>,
     sessions: Arc<Mutex<HashMap<String, Arc<Mutex<LiveSession>>>>>,
     activity_tokens: Arc<Mutex<HashMap<String, u64>>>,
+    taskbar_progress_state: Arc<Mutex<Option<TaskbarProgressSnapshot>>>,
     app_data_dir: PathBuf,
     helper_path: PathBuf,
     helper_candidates: Vec<PathBuf>,
@@ -98,6 +114,7 @@ impl SessionManager {
             state: Arc::new(Mutex::new(state)),
             sessions: Arc::new(Mutex::new(HashMap::new())),
             activity_tokens: Arc::new(Mutex::new(HashMap::new())),
+            taskbar_progress_state: Arc::new(Mutex::new(None)),
             app_data_dir,
             helper_path,
             helper_candidates,
@@ -255,10 +272,8 @@ impl SessionManager {
             let global_default_cwd = state.defaults.default_cwd.clone();
             let (resolved_project_id, inherited_previous_cwd) = {
                 let project = Self::find_project_mut(&mut state, &project_id)?;
-                let inherited_previous_cwd = project
-                    .default_cwd
-                    .clone()
-                    .unwrap_or(global_default_cwd);
+                let inherited_previous_cwd =
+                    project.default_cwd.clone().unwrap_or(global_default_cwd);
                 project.default_cwd = Some(trimmed_cwd.to_string());
                 (project.id.clone(), inherited_previous_cwd)
             };
@@ -443,7 +458,12 @@ impl SessionManager {
                 .into_iter()
                 .map(|shell| shell.trim().to_string())
                 .filter(|shell| !shell.is_empty())
-                .filter(|shell| !matches!(shell.to_ascii_lowercase().as_str(), "pwsh" | "pwsh.exe" | "cmd" | "cmd.exe"))
+                .filter(|shell| {
+                    !matches!(
+                        shell.to_ascii_lowercase().as_str(),
+                        "pwsh" | "pwsh.exe" | "cmd" | "cmd.exe"
+                    )
+                })
                 .fold(Vec::<String>::new(), |mut acc, shell| {
                     if !acc
                         .iter()
@@ -462,9 +482,7 @@ impl SessionManager {
                 .defaults
                 .custom_shells
                 .iter()
-                .any(|shell| {
-                    shell.eq_ignore_ascii_case(&default_shell)
-                })
+                .any(|shell| shell.eq_ignore_ascii_case(&default_shell))
             {
                 state.defaults.custom_shells.insert(0, default_shell);
             }
@@ -623,10 +641,7 @@ impl SessionManager {
         })
     }
 
-    fn spawn_session(
-        &self,
-        context: TerminalLaunchContext,
-    ) -> Result<(), String> {
+    fn spawn_session(&self, context: TerminalLaunchContext) -> Result<(), String> {
         if !self.helper_path.exists() {
             return Err(format!(
                 "ConPTY host executable was not found. Checked: {}",
@@ -639,7 +654,10 @@ impl SessionManager {
         }
 
         let mut command = Command::new(&self.helper_path);
-        command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        command
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
 
         if let Some(launch_cwd) = &context.launch_cwd {
             command.args(["--cwd", launch_cwd]);
@@ -1035,6 +1053,9 @@ impl SessionManager {
                 .map_err(|error| error.to_string())?;
             tokens.remove(&terminal.id);
         }
+
+        let snapshot = self.snapshot_state();
+        self.sync_taskbar_progress(&snapshot);
 
         self.emit_event(
             "terminal-progress",
@@ -1672,6 +1693,7 @@ impl SessionManager {
     fn persist_and_emit_state(&self) -> Result<(), String> {
         let snapshot = self.snapshot_state();
         self.state_store.save(&snapshot)?;
+        self.sync_taskbar_progress(&snapshot);
         self.emit_state_changed_snapshot(snapshot);
         Ok(())
     }
@@ -1694,6 +1716,54 @@ impl SessionManager {
             .map(|state| state.clone())
             .unwrap_or_else(|_| AppState::create_initial())
     }
+
+    #[cfg(target_os = "windows")]
+    fn sync_taskbar_progress(&self, snapshot: &AppState) {
+        use tauri::window::{ProgressBarState, ProgressBarStatus};
+
+        let next_state = aggregate_taskbar_progress(&snapshot.terminals);
+
+        {
+            let last_state = match self.taskbar_progress_state.lock() {
+                Ok(last_state) => last_state,
+                Err(error) => {
+                    eprintln!("Failed to lock taskbar progress cache: {}", error);
+                    return;
+                }
+            };
+            if last_state.as_ref() == Some(&next_state) {
+                return;
+            }
+        }
+
+        let Some(window) = self.app_handle.get_webview_window("main") else {
+            eprintln!("Failed to sync taskbar progress: main window was not found.");
+            return;
+        };
+
+        let progress_state = ProgressBarState {
+            status: Some(match next_state.status {
+                TaskbarProgressStatus::None => ProgressBarStatus::None,
+                TaskbarProgressStatus::Normal => ProgressBarStatus::Normal,
+                TaskbarProgressStatus::Indeterminate => ProgressBarStatus::Indeterminate,
+                TaskbarProgressStatus::Paused => ProgressBarStatus::Paused,
+                TaskbarProgressStatus::Error => ProgressBarStatus::Error,
+            }),
+            progress: next_state.progress.map(u64::from),
+        };
+
+        if let Err(error) = window.set_progress_bar(progress_state) {
+            eprintln!("Failed to sync taskbar progress: {}", error);
+            return;
+        }
+
+        if let Ok(mut last_state) = self.taskbar_progress_state.lock() {
+            *last_state = Some(next_state);
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    fn sync_taskbar_progress(&self, _snapshot: &AppState) {}
 
     fn create_helper_path_candidates(app_handle: &AppHandle) -> Vec<PathBuf> {
         let mut candidates = Vec::new();
@@ -2191,6 +2261,55 @@ struct CwdChangedEvent {
     cwd: String,
 }
 
+fn aggregate_taskbar_progress(terminals: &[TerminalRecord]) -> TaskbarProgressSnapshot {
+    let Some((state, progress)) = terminals
+        .iter()
+        .filter_map(|terminal| taskbar_progress_from_terminal(&terminal.progress_info))
+        .max_by_key(|(state, progress)| (taskbar_progress_priority(*state), *progress))
+    else {
+        return TaskbarProgressSnapshot {
+            status: TaskbarProgressStatus::None,
+            progress: None,
+        };
+    };
+
+    TaskbarProgressSnapshot {
+        status: state,
+        progress,
+    }
+}
+
+fn taskbar_progress_from_terminal(
+    progress_info: &TerminalProgressInfo,
+) -> Option<(TaskbarProgressStatus, Option<u32>)> {
+    match progress_info.state {
+        TerminalProgressState::None => None,
+        TerminalProgressState::Normal => Some((
+            TaskbarProgressStatus::Normal,
+            Some(progress_info.value.min(100)),
+        )),
+        TerminalProgressState::Error => Some((
+            TaskbarProgressStatus::Error,
+            Some(progress_info.value.min(100)),
+        )),
+        TerminalProgressState::Indeterminate => Some((TaskbarProgressStatus::Indeterminate, None)),
+        TerminalProgressState::Warning => Some((
+            TaskbarProgressStatus::Paused,
+            Some(progress_info.value.min(100)),
+        )),
+    }
+}
+
+fn taskbar_progress_priority(status: TaskbarProgressStatus) -> u8 {
+    match status {
+        TaskbarProgressStatus::Normal => 1,
+        TaskbarProgressStatus::Indeterminate => 2,
+        TaskbarProgressStatus::Paused => 3,
+        TaskbarProgressStatus::Error => 4,
+        TaskbarProgressStatus::None => 0,
+    }
+}
+
 fn new_uuid_string() -> String {
     uuid::Uuid::new_v4().to_string()
 }
@@ -2251,9 +2370,7 @@ fn next_launch_cwd_attempt(
                 Some((None, LaunchCwdStrategy::Unspecified))
             }
         }
-        LaunchCwdStrategy::EffectiveDefault => {
-            Some((None, LaunchCwdStrategy::Unspecified))
-        }
+        LaunchCwdStrategy::EffectiveDefault => Some((None, LaunchCwdStrategy::Unspecified)),
         LaunchCwdStrategy::Unspecified => None,
     }
 }
@@ -2261,8 +2378,11 @@ fn next_launch_cwd_attempt(
 #[cfg(test)]
 mod tests {
     use super::{
-        extract_missing_working_directory, next_launch_cwd_attempt, LaunchCwdStrategy,
+        aggregate_taskbar_progress, extract_missing_working_directory, next_launch_cwd_attempt,
+        taskbar_progress_from_terminal, LaunchCwdStrategy, TaskbarProgressSnapshot,
+        TaskbarProgressStatus,
     };
+    use crate::models::{TerminalProgressInfo, TerminalProgressState, TerminalRecord};
 
     #[test]
     fn parse_missing_working_directory_error_message() {
@@ -2275,11 +2395,8 @@ mod tests {
 
     #[test]
     fn retry_with_effective_default_before_omitting_cwd() {
-        let next_attempt = next_launch_cwd_attempt(
-            LaunchCwdStrategy::Persisted,
-            "C:\\repo",
-            "C:\\missing",
-        );
+        let next_attempt =
+            next_launch_cwd_attempt(LaunchCwdStrategy::Persisted, "C:\\repo", "C:\\missing");
 
         assert_eq!(
             next_attempt,
@@ -2292,40 +2409,186 @@ mod tests {
 
     #[test]
     fn skip_default_retry_when_it_matches_missing_directory() {
-        let next_attempt = next_launch_cwd_attempt(
-            LaunchCwdStrategy::Persisted,
-            "C:\\missing",
-            "C:\\missing",
-        );
+        let next_attempt =
+            next_launch_cwd_attempt(LaunchCwdStrategy::Persisted, "C:\\missing", "C:\\missing");
 
-        assert_eq!(
-            next_attempt,
-            Some((None, LaunchCwdStrategy::Unspecified))
-        );
+        assert_eq!(next_attempt, Some((None, LaunchCwdStrategy::Unspecified)));
     }
 
     #[test]
     fn omit_cwd_after_default_retry_fails() {
-        let next_attempt = next_launch_cwd_attempt(
-            LaunchCwdStrategy::EffectiveDefault,
-            "C:\\repo",
-            "C:\\repo",
-        );
+        let next_attempt =
+            next_launch_cwd_attempt(LaunchCwdStrategy::EffectiveDefault, "C:\\repo", "C:\\repo");
 
-        assert_eq!(
-            next_attempt,
-            Some((None, LaunchCwdStrategy::Unspecified))
-        );
+        assert_eq!(next_attempt, Some((None, LaunchCwdStrategy::Unspecified)));
     }
 
     #[test]
     fn stop_retrying_after_unspecified_launch() {
-        let next_attempt = next_launch_cwd_attempt(
-            LaunchCwdStrategy::Unspecified,
-            "C:\\repo",
-            "C:\\missing",
-        );
+        let next_attempt =
+            next_launch_cwd_attempt(LaunchCwdStrategy::Unspecified, "C:\\repo", "C:\\missing");
 
         assert_eq!(next_attempt, None);
+    }
+
+    #[test]
+    fn taskbar_progress_is_hidden_when_no_terminal_reports_progress() {
+        let snapshot = aggregate_taskbar_progress(&[
+            terminal_with_progress(TerminalProgressState::None, 0),
+            terminal_with_progress(TerminalProgressState::None, 0),
+        ]);
+
+        assert_eq!(
+            snapshot,
+            TaskbarProgressSnapshot {
+                status: TaskbarProgressStatus::None,
+                progress: None,
+            }
+        );
+    }
+
+    #[test]
+    fn single_normal_progress_is_mirrored_to_taskbar() {
+        let snapshot = aggregate_taskbar_progress(&[terminal_with_progress(
+            TerminalProgressState::Normal,
+            42,
+        )]);
+
+        assert_eq!(
+            snapshot,
+            TaskbarProgressSnapshot {
+                status: TaskbarProgressStatus::Normal,
+                progress: Some(42),
+            }
+        );
+    }
+
+    #[test]
+    fn highest_normal_progress_wins_with_multiple_normal_terminals() {
+        let snapshot = aggregate_taskbar_progress(&[
+            terminal_with_progress(TerminalProgressState::Normal, 25),
+            terminal_with_progress(TerminalProgressState::Normal, 71),
+        ]);
+
+        assert_eq!(
+            snapshot,
+            TaskbarProgressSnapshot {
+                status: TaskbarProgressStatus::Normal,
+                progress: Some(71),
+            }
+        );
+    }
+
+    #[test]
+    fn indeterminate_progress_outranks_normal_progress() {
+        let snapshot = aggregate_taskbar_progress(&[
+            terminal_with_progress(TerminalProgressState::Normal, 80),
+            terminal_with_progress(TerminalProgressState::Indeterminate, 0),
+        ]);
+
+        assert_eq!(
+            snapshot,
+            TaskbarProgressSnapshot {
+                status: TaskbarProgressStatus::Indeterminate,
+                progress: None,
+            }
+        );
+    }
+
+    #[test]
+    fn warning_progress_outranks_normal_progress() {
+        let snapshot = aggregate_taskbar_progress(&[
+            terminal_with_progress(TerminalProgressState::Normal, 65),
+            terminal_with_progress(TerminalProgressState::Warning, 40),
+        ]);
+
+        assert_eq!(
+            snapshot,
+            TaskbarProgressSnapshot {
+                status: TaskbarProgressStatus::Paused,
+                progress: Some(40),
+            }
+        );
+    }
+
+    #[test]
+    fn error_progress_outranks_warning_progress() {
+        let snapshot = aggregate_taskbar_progress(&[
+            terminal_with_progress(TerminalProgressState::Warning, 90),
+            terminal_with_progress(TerminalProgressState::Error, 12),
+        ]);
+
+        assert_eq!(
+            snapshot,
+            TaskbarProgressSnapshot {
+                status: TaskbarProgressStatus::Error,
+                progress: Some(12),
+            }
+        );
+    }
+
+    #[test]
+    fn highest_percent_wins_within_warning_and_error_states() {
+        let warning_snapshot = aggregate_taskbar_progress(&[
+            terminal_with_progress(TerminalProgressState::Warning, 20),
+            terminal_with_progress(TerminalProgressState::Warning, 55),
+        ]);
+        let error_snapshot = aggregate_taskbar_progress(&[
+            terminal_with_progress(TerminalProgressState::Error, 3),
+            terminal_with_progress(TerminalProgressState::Error, 67),
+        ]);
+
+        assert_eq!(
+            warning_snapshot,
+            TaskbarProgressSnapshot {
+                status: TaskbarProgressStatus::Paused,
+                progress: Some(55),
+            }
+        );
+        assert_eq!(
+            error_snapshot,
+            TaskbarProgressSnapshot {
+                status: TaskbarProgressStatus::Error,
+                progress: Some(67),
+            }
+        );
+    }
+
+    #[test]
+    fn warning_terminal_progress_maps_to_paused_taskbar_status() {
+        let mapped = taskbar_progress_from_terminal(&TerminalProgressInfo {
+            state: TerminalProgressState::Warning,
+            value: 33,
+            updated_at: "2026-04-13T10:00:00Z".to_string(),
+        });
+
+        assert_eq!(mapped, Some((TaskbarProgressStatus::Paused, Some(33))));
+    }
+
+    fn terminal_with_progress(state: TerminalProgressState, value: u32) -> TerminalRecord {
+        let mut terminal = TerminalRecord {
+            id: "terminal-1".to_string(),
+            project_id: "project-1".to_string(),
+            name: "Terminal".to_string(),
+            cwd: "C:\\repo".to_string(),
+            shell: "pwsh.exe".to_string(),
+            status: crate::models::TerminalStatus::Running,
+            activity: crate::models::TerminalActivity::for_status(
+                crate::models::TerminalStatus::Running,
+            ),
+            progress_info: TerminalProgressInfo::none(),
+            last_exit_code: None,
+            created_at: "2026-04-13T10:00:00Z".to_string(),
+            last_started_at: None,
+            diagnostic_log_path: None,
+            last_command_failure: None,
+            last_session_failure: None,
+        };
+        terminal.progress_info = TerminalProgressInfo {
+            state,
+            value,
+            updated_at: "2026-04-13T10:00:00Z".to_string(),
+        };
+        terminal
     }
 }
