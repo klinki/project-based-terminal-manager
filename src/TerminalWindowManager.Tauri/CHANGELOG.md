@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.3.0](https://github.com/klinki/project-based-terminal-manager/compare/v0.2.0...v0.3.0) (2026-04-14)
+
+
+### Features
+
+* **tauri:** show build version and date in settings ([323a5c1](https://github.com/klinki/project-based-terminal-manager/commit/323a5c1e3171060c9791f316b32843a6116aab86))
+* **tauri:** show console progress in Windows taskbar ([98db550](https://github.com/klinki/project-based-terminal-manager/commit/98db5507c32101d72a371dd7ad41a1c8744d7634))
+
+
+### Bug Fixes
+
+* Harden terminal crash isolation and diagnostics ([18497fb](https://github.com/klinki/project-based-terminal-manager/commit/18497fbca056668d2a479276279392a25eff527b))
+* **tauri:** stop dev rebuild loop from helper staging ([9d6795a](https://github.com/klinki/project-based-terminal-manager/commit/9d6795aefbff1c356db94544af88849a94756c2f))
+
 ## [0.2.0](https://github.com/klinki/project-based-terminal-manager/compare/v0.1.0...v0.2.0) (2026-04-13)
 
 
