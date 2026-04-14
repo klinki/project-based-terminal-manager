@@ -1,6 +1,6 @@
 {
 	"name": "terminal-window-manager-tauri",
-	"version": "0.2.0",
+	"version": "0.3.0",
 	"type": "module",
 	"description": "Tauri + xterm.js + ConPTY desktop shell for project-based terminal switching.",
 	"scripts": {
