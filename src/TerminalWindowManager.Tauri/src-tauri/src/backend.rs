@@ -234,10 +234,18 @@ impl SessionManager {
 
         {
             let mut state = self.state.lock().map_err(|error| error.to_string())?;
+            let resolved_name = unique_terminal_name(
+                state
+                    .terminals
+                    .iter()
+                    .filter(|terminal| terminal.project_id == project_id)
+                    .map(|terminal| terminal.name.as_str()),
+                trimmed_name,
+            );
             state.terminals.push(TerminalRecord {
                 id: new_uuid_string(),
                 project_id,
-                name: trimmed_name.to_string(),
+                name: resolved_name,
                 cwd: resolved_cwd,
                 shell: shell
                     .map(|value| value.trim().to_string())
@@ -2546,6 +2554,43 @@ fn same_path_text(left: &str, right: &str) -> bool {
     }
 }
 
+fn unique_terminal_name<'a>(
+    existing_names: impl Iterator<Item = &'a str>,
+    requested_name: &str,
+) -> String {
+    let existing_names = existing_names.collect::<Vec<&str>>();
+    if !existing_names.iter().any(|name| *name == requested_name) {
+        return requested_name.to_string();
+    }
+
+    let (prefix, requested_number) = split_numbered_suffix(requested_name);
+    let mut highest_suffix = requested_number.unwrap_or(1);
+    for existing_name in existing_names {
+        let (existing_prefix, existing_number) = split_numbered_suffix(existing_name);
+        if existing_prefix == prefix {
+            highest_suffix = highest_suffix.max(existing_number.unwrap_or(1));
+        }
+    }
+
+    format!("{} {}", prefix, highest_suffix + 1)
+}
+
+fn split_numbered_suffix(name: &str) -> (&str, Option<u32>) {
+    let Some((prefix, suffix)) = name.rsplit_once(' ') else {
+        return (name, None);
+    };
+
+    let Ok(number) = suffix.parse::<u32>() else {
+        return (name, None);
+    };
+
+    if number == 0 || prefix.trim().is_empty() {
+        return (name, None);
+    }
+
+    (prefix, Some(number))
+}
+
 fn next_launch_cwd_attempt(
     current_strategy: LaunchCwdStrategy,
     effective_default_cwd: &str,
@@ -2573,8 +2618,8 @@ fn next_launch_cwd_attempt(
 mod tests {
     use super::{
         aggregate_taskbar_progress, extract_missing_working_directory, next_launch_cwd_attempt,
-        taskbar_progress_from_terminal, LaunchCwdStrategy, TaskbarProgressSnapshot,
-        TaskbarProgressStatus,
+        taskbar_progress_from_terminal, unique_terminal_name, LaunchCwdStrategy,
+        TaskbarProgressSnapshot, TaskbarProgressStatus,
     };
     use crate::models::{TerminalProgressInfo, TerminalProgressState, TerminalRecord};
 
@@ -2623,6 +2668,27 @@ mod tests {
             next_launch_cwd_attempt(LaunchCwdStrategy::Unspecified, "C:\\repo", "C:\\missing");
 
         assert_eq!(next_attempt, None);
+    }
+
+    #[test]
+    fn terminal_name_is_preserved_when_unique() {
+        let resolved = unique_terminal_name(["Console 1", "Console 2"].into_iter(), "Build");
+
+        assert_eq!(resolved, "Build");
+    }
+
+    #[test]
+    fn terminal_name_advances_numbered_suffix_when_duplicate() {
+        let resolved = unique_terminal_name(["Console 1", "Console 2"].into_iter(), "Console 2");
+
+        assert_eq!(resolved, "Console 3");
+    }
+
+    #[test]
+    fn terminal_name_adds_numbered_suffix_to_duplicate_custom_name() {
+        let resolved = unique_terminal_name(["SSH", "SSH 2"].into_iter(), "SSH");
+
+        assert_eq!(resolved, "SSH 3");
     }
 
     #[test]
