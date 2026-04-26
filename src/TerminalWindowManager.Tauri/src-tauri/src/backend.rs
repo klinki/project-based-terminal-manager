@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
@@ -84,6 +84,7 @@ pub struct SessionManager {
     state: Arc<Mutex<AppState>>,
     sessions: Arc<Mutex<HashMap<String, Arc<Mutex<LiveSession>>>>>,
     activity_tokens: Arc<Mutex<HashMap<String, u64>>>,
+    activity_deadlines: Arc<Mutex<HashMap<String, ActivityDeadline>>>,
     taskbar_progress_state: Arc<Mutex<Option<TaskbarProgressSnapshot>>>,
     app_data_dir: PathBuf,
     helper_path: PathBuf,
@@ -114,6 +115,7 @@ impl SessionManager {
             state: Arc::new(Mutex::new(state)),
             sessions: Arc::new(Mutex::new(HashMap::new())),
             activity_tokens: Arc::new(Mutex::new(HashMap::new())),
+            activity_deadlines: Arc::new(Mutex::new(HashMap::new())),
             taskbar_progress_state: Arc::new(Mutex::new(None)),
             app_data_dir,
             helper_path,
@@ -1608,7 +1610,12 @@ impl SessionManager {
                     is_indeterminate,
                     updated_at: now_iso_string(),
                 };
-                if terminal.activity != next {
+                if terminal.activity.phase != next.phase
+                    || terminal.activity.summary != next.summary
+                    || terminal.activity.detail != next.detail
+                    || terminal.activity.progress != next.progress
+                    || terminal.activity.is_indeterminate != next.is_indeterminate
+                {
                     terminal.activity = next;
                     changed = true;
                 }
@@ -1704,36 +1711,89 @@ impl SessionManager {
         progress: u32,
         is_indeterminate: bool,
     ) {
-        let token = {
-            let mut tokens = match self.activity_tokens.lock() {
-                Ok(tokens) => tokens,
+        let should_spawn_worker = {
+            let mut deadlines = match self.activity_deadlines.lock() {
+                Ok(deadlines) => deadlines,
                 Err(error) => {
-                    eprintln!("Failed to lock activity tokens: {}", error);
+                    eprintln!("Failed to lock activity deadlines: {}", error);
                     return;
                 }
             };
-            let entry = tokens.entry(terminal_id.clone()).or_insert(0);
-            *entry += 1;
-            *entry
+
+            let next_deadline = Instant::now() + Duration::from_millis(delay_ms);
+            if let Some(deadline) = deadlines.get_mut(&terminal_id) {
+                deadline.deadline = next_deadline;
+                deadline.phase = phase;
+                deadline.summary = summary.clone();
+                deadline.detail = detail.clone();
+                deadline.progress = progress;
+                deadline.is_indeterminate = is_indeterminate;
+                false
+            } else {
+                deadlines.insert(
+                    terminal_id.clone(),
+                    ActivityDeadline {
+                        deadline: next_deadline,
+                        phase,
+                        summary: summary.clone(),
+                        detail: detail.clone(),
+                        progress,
+                        is_indeterminate,
+                    },
+                );
+                true
+            }
         };
+
+        if !should_spawn_worker {
+            return;
+        }
 
         let manager = self.clone();
         thread::spawn(move || {
-            thread::sleep(Duration::from_millis(delay_ms));
-            let should_apply = {
-                let tokens = match manager.activity_tokens.lock() {
-                    Ok(tokens) => tokens,
-                    Err(error) => {
-                        eprintln!("Failed to lock activity tokens: {}", error);
+            let target_activity = loop {
+                let sleep_for = {
+                    let deadlines = match manager.activity_deadlines.lock() {
+                        Ok(deadlines) => deadlines,
+                        Err(error) => {
+                            eprintln!("Failed to lock activity deadlines: {}", error);
+                            return;
+                        }
+                    };
+
+                    let Some(deadline) = deadlines.get(&terminal_id) else {
                         return;
+                    };
+                    deadline.deadline.saturating_duration_since(Instant::now())
+                };
+
+                if !sleep_for.is_zero() {
+                    thread::sleep(sleep_for);
+                    continue;
+                }
+
+                let ready_activity = {
+                    let mut deadlines = match manager.activity_deadlines.lock() {
+                        Ok(deadlines) => deadlines,
+                        Err(error) => {
+                            eprintln!("Failed to lock activity deadlines: {}", error);
+                            return;
+                        }
+                    };
+
+                    match deadlines.get(&terminal_id) {
+                        Some(deadline) if deadline.deadline <= Instant::now() => {
+                            deadlines.remove(&terminal_id)
+                        }
+                        Some(_) => None,
+                        None => return,
                     }
                 };
-                tokens.get(&terminal_id).copied().unwrap_or_default() == token
-            };
 
-            if !should_apply {
-                return;
-            }
+                if let Some(activity) = ready_activity {
+                    break activity;
+                }
+            };
 
             let active_progress = {
                 let state = match manager.state.lock() {
@@ -1768,11 +1828,11 @@ impl SessionManager {
 
             let _ = manager.update_terminal_activity(
                 &terminal_id,
-                phase,
-                summary,
-                detail,
-                progress,
-                is_indeterminate,
+                target_activity.phase,
+                target_activity.summary,
+                target_activity.detail,
+                target_activity.progress,
+                target_activity.is_indeterminate,
             );
         });
     }
@@ -2091,6 +2151,14 @@ impl SessionManager {
                 }
             }
         }
+
+        if let Ok(mut deadlines) = self.activity_deadlines.lock() {
+            deadlines.remove(terminal_id);
+        }
+
+        if let Ok(mut tokens) = self.activity_tokens.lock() {
+            tokens.remove(terminal_id);
+        }
     }
 
     fn describe_session_error(
@@ -2264,6 +2332,17 @@ struct LiveSession {
     received_exit_event: bool,
     received_error_event: bool,
 }
+
+#[derive(Debug, Clone)]
+struct ActivityDeadline {
+    deadline: Instant,
+    phase: TerminalActivityPhase,
+    summary: String,
+    detail: String,
+    progress: u32,
+    is_indeterminate: bool,
+}
+
 #[derive(Debug, Clone)]
 struct TerminalLaunchContext {
     session_id: String,

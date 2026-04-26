@@ -30,9 +30,7 @@ const rpc = Electroview.defineRPC<TerminalManagerRpc>({
 				});
 			},
 			terminalOutput: ({ terminalId, dataBase64 }) => {
-				safelyHandleTerminalViewEvent(terminalId, "terminal-output", (terminalView) => {
-					terminalView.terminal.write(decodeBase64(dataBase64));
-				});
+				enqueueTerminalOutput(terminalId, dataBase64);
 			},
 			terminalStarted: ({ terminalId }) => {
 				safelyHandleTerminalViewEvent(terminalId, "terminal-started", (terminalView) => {
@@ -185,6 +183,8 @@ let lastRenderedTreeMarkup = "";
 let titlebarDragState: TitlebarDragState | null = null;
 
 const terminalViews = new Map<string, TerminalView>();
+const terminalOutputBuffers = new Map<string, string[]>();
+const terminalOutputFlushScheduled = new Set<string>();
 const utf8Decoder = new TextDecoder();
 
 function getRendererRpc() {
@@ -387,6 +387,31 @@ function recoverTerminalView(terminalId: string): TerminalView {
 	}
 
 	return terminalView;
+}
+
+function enqueueTerminalOutput(terminalId: string, dataBase64: string): void {
+	const buffer = terminalOutputBuffers.get(terminalId) ?? [];
+	buffer.push(decodeBase64(dataBase64));
+	terminalOutputBuffers.set(terminalId, buffer);
+
+	if (terminalOutputFlushScheduled.has(terminalId)) {
+		return;
+	}
+
+	terminalOutputFlushScheduled.add(terminalId);
+	requestAnimationFrame(() => {
+		terminalOutputFlushScheduled.delete(terminalId);
+		const chunks = terminalOutputBuffers.get(terminalId);
+		if (!chunks || chunks.length === 0) {
+			return;
+		}
+
+		terminalOutputBuffers.delete(terminalId);
+		const output = chunks.join("");
+		safelyHandleTerminalViewEvent(terminalId, "terminal-output", (terminalView) => {
+			terminalView.terminal.write(output);
+		});
+	});
 }
 
 app.innerHTML = `
@@ -2144,6 +2169,8 @@ function pruneTerminalViews(): void {
 		}
 		terminalView.wrapper.remove();
 		terminalViews.delete(terminalId);
+		terminalOutputBuffers.delete(terminalId);
+		terminalOutputFlushScheduled.delete(terminalId);
 	}
 }
 
