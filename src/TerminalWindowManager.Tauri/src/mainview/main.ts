@@ -33,12 +33,18 @@ const rpc = Electroview.defineRPC<TerminalManagerRpc>({
 				enqueueTerminalOutput(terminalId, dataBase64);
 			},
 			terminalStarted: ({ terminalId }) => {
+				resetTerminalOutputDecoder(terminalId);
 				safelyHandleTerminalViewEvent(terminalId, "terminal-started", (terminalView) => {
 					terminalView.terminal.focus();
 				});
 			},
 			terminalExit: ({ terminalId, exitCode }) => {
+				const trailingOutput = flushTerminalOutputDecoder(terminalId);
 				safelyHandleTerminalViewEvent(terminalId, "terminal-exit", (terminalView) => {
+					if (trailingOutput.length > 0) {
+						terminalView.terminal.write(trailingOutput);
+					}
+
 					terminalView.terminal.writeln(
 						`\r\n[session exited with code ${exitCode ?? "unknown"}]`,
 					);
@@ -53,7 +59,12 @@ const rpc = Electroview.defineRPC<TerminalManagerRpc>({
 				});
 			},
 			terminalError: ({ terminalId, message }) => {
+				const trailingOutput = flushTerminalOutputDecoder(terminalId);
 				safelyHandleTerminalViewEvent(terminalId, "terminal-error", (terminalView) => {
+					if (trailingOutput.length > 0) {
+						terminalView.terminal.write(trailingOutput);
+					}
+
 					terminalView.terminal.writeln(`\r\n[error] ${message}`);
 					const terminal = state.terminals.find(
 						(candidate) => candidate.id === terminalId,
@@ -185,7 +196,7 @@ let titlebarDragState: TitlebarDragState | null = null;
 const terminalViews = new Map<string, TerminalView>();
 const terminalOutputBuffers = new Map<string, string[]>();
 const terminalOutputFlushScheduled = new Set<string>();
-const utf8Decoder = new TextDecoder();
+const terminalOutputDecoders = new Map<string, TextDecoder>();
 
 function getRendererRpc() {
 	const rendererRpc = electroview.rpc;
@@ -391,7 +402,12 @@ function recoverTerminalView(terminalId: string): TerminalView {
 
 function enqueueTerminalOutput(terminalId: string, dataBase64: string): void {
 	const buffer = terminalOutputBuffers.get(terminalId) ?? [];
-	buffer.push(decodeBase64(dataBase64));
+	const decodedOutput = decodeTerminalOutput(terminalId, dataBase64);
+	if (decodedOutput.length === 0) {
+		return;
+	}
+
+	buffer.push(decodedOutput);
 	terminalOutputBuffers.set(terminalId, buffer);
 
 	if (terminalOutputFlushScheduled.has(terminalId)) {
@@ -540,7 +556,7 @@ app.innerHTML = `
 				<h3 id="confirm-dialog-title" class="confirm-dialog-title">Confirm action</h3>
 				<p id="confirm-dialog-message" class="confirm-dialog-message"></p>
 				<div class="confirm-dialog-actions">
-					<button id="confirm-dialog-cancel" class="secondary-button" value="cancel">Cancel</button>
+					<button id="confirm-dialog-cancel" class="secondary-button" type="button" value="cancel">Cancel</button>
 					<button id="confirm-dialog-confirm" class="danger-button" value="confirm">Delete</button>
 				</div>
 			</form>
@@ -551,7 +567,7 @@ app.innerHTML = `
 				<p id="rename-dialog-message" class="confirm-dialog-message"></p>
 				<input id="rename-dialog-input" class="dialog-input" type="text" />
 				<div class="confirm-dialog-actions">
-					<button class="secondary-button" value="cancel">Cancel</button>
+					<button id="rename-dialog-cancel" class="secondary-button" type="button" value="cancel">Cancel</button>
 					<button id="rename-dialog-confirm" class="primary-button" value="confirm">Rename</button>
 				</div>
 			</form>
@@ -611,7 +627,7 @@ app.innerHTML = `
 					</dl>
 				</div>
 				<div class="confirm-dialog-actions">
-					<button class="secondary-button" value="cancel">Cancel</button>
+					<button id="settings-dialog-cancel" class="secondary-button" type="button" value="cancel">Cancel</button>
 					<button id="settings-dialog-save" class="primary-button" value="confirm">Save</button>
 				</div>
 			</form>
@@ -654,6 +670,8 @@ const confirmDialogTitle =
 	queryHtmlElement<HTMLHeadingElement>("confirm-dialog-title");
 const confirmDialogMessage =
 	queryHtmlElement<HTMLParagraphElement>("confirm-dialog-message");
+const confirmDialogCancel =
+	queryHtmlElement<HTMLButtonElement>("confirm-dialog-cancel");
 const confirmDialogConfirm =
 	queryHtmlElement<HTMLButtonElement>("confirm-dialog-confirm");
 const renameDialog = queryHtmlElement<HTMLDialogElement>("rename-dialog");
@@ -663,10 +681,14 @@ const renameDialogMessage =
 	queryHtmlElement<HTMLParagraphElement>("rename-dialog-message");
 const renameDialogInput =
 	queryHtmlElement<HTMLInputElement>("rename-dialog-input");
+const renameDialogCancel =
+	queryHtmlElement<HTMLButtonElement>("rename-dialog-cancel");
 const settingsButton =
 	queryHtmlElement<HTMLButtonElement>("settings-button");
 const settingsDialog =
 	queryHtmlElement<HTMLDialogElement>("settings-dialog");
+const settingsDialogCancel =
+	queryHtmlElement<HTMLButtonElement>("settings-dialog-cancel");
 const settingsDialogInputCwd =
 	queryHtmlElement<HTMLInputElement>("settings-dialog-default-cwd");
 const settingsDialogInputShell =
@@ -1101,6 +1123,10 @@ confirmDialog.addEventListener("close", () => {
 	resolver(confirmDialog.returnValue === "confirm");
 });
 
+confirmDialogCancel.addEventListener("click", () => {
+	confirmDialog.close("cancel");
+});
+
 renameDialog.addEventListener("close", () => {
 	const resolver = pendingRenameResolve;
 	pendingRenameResolve = null;
@@ -1111,6 +1137,10 @@ renameDialog.addEventListener("close", () => {
 	resolver(
 		renameDialog.returnValue === "confirm" ? renameDialogInput.value.trim() : null,
 	);
+});
+
+renameDialogCancel.addEventListener("click", () => {
+	renameDialog.close("cancel");
 });
 
 settingsDialog.addEventListener("close", () => {
@@ -1133,6 +1163,10 @@ settingsDialog.addEventListener("close", () => {
 				}
 			: null,
 	);
+});
+
+settingsDialogCancel.addEventListener("click", () => {
+	settingsDialog.close("cancel");
 });
 
 window.addEventListener("error", (event) => {
@@ -2171,6 +2205,7 @@ function pruneTerminalViews(): void {
 		terminalViews.delete(terminalId);
 		terminalOutputBuffers.delete(terminalId);
 		terminalOutputFlushScheduled.delete(terminalId);
+		terminalOutputDecoders.delete(terminalId);
 	}
 }
 
@@ -2641,14 +2676,39 @@ function escapeHtmlAttribute(value: string): string {
 	return escapeHtml(value);
 }
 
-function decodeBase64(base64: string): string {
+function decodeTerminalOutput(terminalId: string, base64: string): string {
+	let decoder = terminalOutputDecoders.get(terminalId);
+	if (!decoder) {
+		decoder = new TextDecoder();
+		terminalOutputDecoders.set(terminalId, decoder);
+	}
+
+	return decoder.decode(decodeBase64Bytes(base64), { stream: true });
+}
+
+function flushTerminalOutputDecoder(terminalId: string): string {
+	const decoder = terminalOutputDecoders.get(terminalId);
+	if (!decoder) {
+		return "";
+	}
+
+	const trailingOutput = decoder.decode();
+	terminalOutputDecoders.delete(terminalId);
+	return trailingOutput;
+}
+
+function resetTerminalOutputDecoder(terminalId: string): void {
+	terminalOutputDecoders.delete(terminalId);
+}
+
+function decodeBase64Bytes(base64: string): Uint8Array {
 	const binary = atob(base64);
 	const bytes = new Uint8Array(binary.length);
 	for (let index = 0; index < binary.length; index += 1) {
 		bytes[index] = binary.charCodeAt(index);
 	}
 
-	return utf8Decoder.decode(bytes);
+	return bytes;
 }
 
 function queryHtmlElement<TElement extends HTMLElement>(id: string): TElement {
