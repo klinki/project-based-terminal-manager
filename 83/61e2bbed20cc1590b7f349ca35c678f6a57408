@@ -1,0 +1,22 @@
+src/TerminalWindowManager.Tauri/src-tauri/src/backend.rs
+  64dd86060e4354f9 2554-2593,2621-2622,2673-2693
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "8361e2bbed20cc1590b7f349ca35c678f6a57408",
+  "prompts": {
+    "64dd86060e4354f9": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019dcb5f-d3ae-7392-a36e-7d4d2450d59e",
+        "model": "gpt-5.5"
+      },
+      "human_author": "David Klingenberg",
+      "total_additions": 152,
+      "total_deletions": 56,
+      "accepted_lines": 69,
+      "overriden_lines": 0
+    }
+  }
+}

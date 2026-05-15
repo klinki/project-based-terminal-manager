@@ -1,0 +1,22 @@
+src/TerminalWindowManager.Tauri/src/mainview/main.ts
+  0a29b1068279afdd 1124-1125,1166-1167,2677-2704,2711
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "ea4e1599b589dd724ef350dd00f95226c3b47b12",
+  "prompts": {
+    "0a29b1068279afdd": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df27a-8764-7860-9d3e-2ce59a955137",
+        "model": "gpt-5.5"
+      },
+      "human_author": "David Klingenberg",
+      "total_additions": 67,
+      "total_deletions": 7,
+      "accepted_lines": 67,
+      "overriden_lines": 0
+    }
+  }
+}

@@ -1,0 +1,11 @@
+src/TerminalWindowManager.Tauri/src-tauri/src/backend.rs
+  64dd86060e4354f9 2546-2548
+src/TerminalWindowManager.Tauri/src/mainview/main.ts
+  0a29b1068279afdd 1102-1103,1136-1137,2642-2643
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "4d5f758769acbcf4f716c4649d34e85b3d61f4c4",
+  "prompts": {}
+}
