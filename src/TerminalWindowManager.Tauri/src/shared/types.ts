@@ -37,6 +37,7 @@ export interface ProjectRecord {
 	id: string;
 	name: string;
 	createdAt: string;
+	sortOrder: number;
 	defaultCwd: string | null;
 }
 
@@ -75,6 +76,7 @@ export interface TerminalRecord {
 	progressInfo: TerminalProgressInfo;
 	lastExitCode: number | null;
 	createdAt: string;
+	sortOrder: number;
 	lastStartedAt: string | null;
 	diagnosticLogPath: string | null;
 	lastCommandFailure: TerminalCommandFailure | null;
@@ -147,6 +149,7 @@ export type TerminalManagerRpc = {
 				name: string;
 			}) => Promise<AppState>;
 			deleteProject: (params: { projectId: string }) => Promise<AppState>;
+			reorderProjects: (params: { projectIds: string[] }) => Promise<AppState>;
 			createTerminal: (params: {
 				projectId: string;
 				name: string;
@@ -158,6 +161,10 @@ export type TerminalManagerRpc = {
 				name: string;
 			}) => Promise<AppState>;
 			deleteTerminal: (params: { terminalId: string }) => Promise<AppState>;
+			reorderTerminals: (params: {
+				projectId: string;
+				terminalIds: string[];
+			}) => Promise<AppState>;
 			activateTerminal: (params: {
 				terminalId: string;
 				cols: number;

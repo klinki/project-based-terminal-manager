@@ -152,6 +152,11 @@ type TitlebarDragState = {
 	startY: number;
 };
 
+type SidebarDragState =
+	| { kind: "project"; id: string }
+	| { kind: "terminal"; id: string; projectId: string }
+	| null;
+
 const BUILT_IN_SHELL_OPTIONS = ["pwsh.exe", "cmd.exe"] as const;
 const TITLEBAR_DRAG_THRESHOLD_PX = 4;
 
@@ -192,6 +197,7 @@ let settingsDialogCustomShells: string[] = [];
 let settingsShellMenuOpen = false;
 let lastRenderedTreeMarkup = "";
 let titlebarDragState: TitlebarDragState | null = null;
+let sidebarDragState: SidebarDragState = null;
 
 const terminalViews = new Map<string, TerminalView>();
 const terminalOutputBuffers = new Map<string, string[]>();
@@ -1002,6 +1008,96 @@ projectTreeElement.addEventListener("focusout", (event) => {
 	void commitTerminalRename(terminalId);
 });
 
+projectTreeElement.addEventListener("dragstart", (event) => {
+	const target = event.target as HTMLElement;
+	const projectDrag = target.closest<HTMLElement>("[data-project-drag-id]");
+	if (projectDrag) {
+		const projectId = projectDrag.dataset.projectDragId!;
+		if (editingProjectId === projectId) {
+			event.preventDefault();
+			return;
+		}
+
+		sidebarDragState = { kind: "project", id: projectId };
+		event.dataTransfer?.setData("text/plain", projectId);
+		if (event.dataTransfer) {
+			event.dataTransfer.effectAllowed = "move";
+		}
+		projectDrag.classList.add("dragging");
+		hideContextMenu();
+		return;
+	}
+
+	const terminalDrag = target.closest<HTMLElement>("[data-terminal-drag-id]");
+	if (!terminalDrag) {
+		return;
+	}
+
+	const terminalId = terminalDrag.dataset.terminalDragId!;
+	const projectId = terminalDrag.dataset.terminalProjectId!;
+	if (editingTerminalId === terminalId) {
+		event.preventDefault();
+		return;
+	}
+
+	sidebarDragState = { kind: "terminal", id: terminalId, projectId };
+	event.dataTransfer?.setData("text/plain", terminalId);
+	if (event.dataTransfer) {
+		event.dataTransfer.effectAllowed = "move";
+	}
+	terminalDrag.classList.add("dragging");
+	hideContextMenu();
+});
+
+projectTreeElement.addEventListener("dragover", (event) => {
+	if (!sidebarDragState) {
+		return;
+	}
+
+	const dropTarget = resolveSidebarDropTarget(event);
+	clearSidebarDropIndicators();
+	if (!dropTarget) {
+		return;
+	}
+
+	event.preventDefault();
+	if (event.dataTransfer) {
+		event.dataTransfer.dropEffect = "move";
+	}
+	dropTarget.element.classList.add(
+		dropTarget.placement === "before" ? "drop-before" : "drop-after",
+	);
+});
+
+projectTreeElement.addEventListener("dragleave", (event) => {
+	const nextTarget = event.relatedTarget as Node | null;
+	if (nextTarget && projectTreeElement.contains(nextTarget)) {
+		return;
+	}
+
+	clearSidebarDropIndicators();
+});
+
+projectTreeElement.addEventListener("drop", (event) => {
+	if (!sidebarDragState) {
+		return;
+	}
+
+	const dropTarget = resolveSidebarDropTarget(event);
+	clearSidebarDropIndicators();
+	if (!dropTarget) {
+		return;
+	}
+
+	event.preventDefault();
+	void runUiAction("Reorder sidebar", () => applySidebarDrop(dropTarget));
+});
+
+projectTreeElement.addEventListener("dragend", () => {
+	sidebarDragState = null;
+	clearSidebarDragStateClasses();
+});
+
 projectTreeElement.addEventListener("contextmenu", (event) => {
 	const target = event.target as HTMLElement;
 	const terminalButton = target.closest<HTMLButtonElement>("[data-terminal-id]");
@@ -1039,6 +1135,20 @@ sidebarContextMenu.addEventListener("click", (event) => {
 		} else {
 			void renameTerminal(contextMenuState.id);
 		}
+		return;
+	}
+
+	if (actionButton.dataset.contextAction === "move-up") {
+		void runUiAction("Move item up", () =>
+			moveSidebarItem(contextMenuState!, "up"),
+		);
+		return;
+	}
+
+	if (actionButton.dataset.contextAction === "move-down") {
+		void runUiAction("Move item down", () =>
+			moveSidebarItem(contextMenuState!, "down"),
+		);
 		return;
 	}
 
@@ -1295,9 +1405,17 @@ function showContextMenu(
 		target.kind === "project" ? "Rename project" : "Rename console";
 	const deleteLabel =
 		target.kind === "project" ? "Delete project" : "Delete console";
+	const canMoveUp = canMoveSidebarItem(target, "up");
+	const canMoveDown = canMoveSidebarItem(target, "down");
 	sidebarContextMenu.innerHTML = `
 		<button type="button" class="context-menu-item" data-context-action="rename">
 			${renameLabel}
+		</button>
+		<button type="button" class="context-menu-item" data-context-action="move-up" ${canMoveUp ? "" : "disabled"}>
+			Move up
+		</button>
+		<button type="button" class="context-menu-item" data-context-action="move-down" ${canMoveDown ? "" : "disabled"}>
+			Move down
 		</button>
 		<button type="button" class="context-menu-item danger" data-context-action="delete">
 			${deleteLabel}
@@ -1309,7 +1427,7 @@ function showContextMenu(
 	const horizontalPadding = 12;
 	const verticalPadding = 12;
 	const menuWidth = 190;
-	const menuHeight = 88;
+	const menuHeight = 176;
 	sidebarContextMenu.style.left = `${Math.min(clientX, window.innerWidth - menuWidth - horizontalPadding)}px`;
 	sidebarContextMenu.style.top = `${Math.min(clientY, window.innerHeight - menuHeight - verticalPadding)}px`;
 }
@@ -1319,6 +1437,255 @@ function hideContextMenu(): void {
 	sidebarContextMenu.classList.add("hidden");
 	sidebarContextMenu.setAttribute("aria-hidden", "true");
 	sidebarContextMenu.innerHTML = "";
+}
+
+type SidebarDropTarget = {
+	kind: "project" | "terminal";
+	id: string;
+	projectId?: string;
+	placement: "before" | "after";
+	element: HTMLElement;
+};
+
+function resolveSidebarDropTarget(event: DragEvent): SidebarDropTarget | null {
+	const target = event.target as HTMLElement;
+	if (sidebarDragState?.kind === "project") {
+		const projectNode = target.closest<HTMLElement>("[data-project-node-id]");
+		if (!projectNode) {
+			return null;
+		}
+
+		const projectId = projectNode.dataset.projectNodeId!;
+		if (projectId === sidebarDragState.id) {
+			return null;
+		}
+
+		return {
+			kind: "project",
+			id: projectId,
+			placement: getDropPlacement(event, projectNode),
+			element: projectNode,
+		};
+	}
+
+	if (sidebarDragState?.kind !== "terminal") {
+		return null;
+	}
+
+	const terminalNode = target.closest<HTMLElement>("[data-terminal-node-id]");
+	if (!terminalNode) {
+		return null;
+	}
+
+	const terminalId = terminalNode.dataset.terminalNodeId!;
+	const projectId = terminalNode.dataset.terminalProjectId!;
+	if (
+		terminalId === sidebarDragState.id ||
+		projectId !== sidebarDragState.projectId
+	) {
+		return null;
+	}
+
+	return {
+		kind: "terminal",
+		id: terminalId,
+		projectId,
+		placement: getDropPlacement(event, terminalNode),
+		element: terminalNode,
+	};
+}
+
+function getDropPlacement(
+	event: DragEvent,
+	element: HTMLElement,
+): "before" | "after" {
+	const rect = element.getBoundingClientRect();
+	return event.clientY < rect.top + rect.height / 2 ? "before" : "after";
+}
+
+function clearSidebarDropIndicators(): void {
+	projectTreeElement
+		.querySelectorAll(".drop-before, .drop-after")
+		.forEach((element) => {
+			element.classList.remove("drop-before", "drop-after");
+		});
+}
+
+function clearSidebarDragStateClasses(): void {
+	projectTreeElement
+		.querySelectorAll(".dragging, .drop-before, .drop-after")
+		.forEach((element) => {
+			element.classList.remove("dragging", "drop-before", "drop-after");
+		});
+}
+
+async function applySidebarDrop(dropTarget: SidebarDropTarget): Promise<void> {
+	if (!sidebarDragState || sidebarDragState.kind !== dropTarget.kind) {
+		return;
+	}
+
+	if (dropTarget.kind === "project" && sidebarDragState.kind === "project") {
+		await reorderProjectsAroundTarget(
+			sidebarDragState.id,
+			dropTarget.id,
+			dropTarget.placement,
+		);
+		return;
+	}
+
+	if (
+		dropTarget.kind === "terminal" &&
+		sidebarDragState.kind === "terminal" &&
+		dropTarget.projectId
+	) {
+		await reorderTerminalsAroundTarget(
+			sidebarDragState.projectId,
+			sidebarDragState.id,
+			dropTarget.id,
+			dropTarget.placement,
+		);
+	}
+}
+
+function canMoveSidebarItem(
+	target: { kind: "project" | "terminal"; id: string },
+	direction: "up" | "down",
+): boolean {
+	const siblings =
+		target.kind === "project"
+			? sortProjects(state.projects).map((project) => project.id)
+			: getSortedTerminalSiblings(target.id).map((terminal) => terminal.id);
+	const index = siblings.indexOf(target.id);
+	if (index < 0) {
+		return false;
+	}
+
+	return direction === "up" ? index > 0 : index < siblings.length - 1;
+}
+
+async function moveSidebarItem(
+	target: { kind: "project" | "terminal"; id: string },
+	direction: "up" | "down",
+): Promise<void> {
+	hideContextMenu();
+	const siblings =
+		target.kind === "project"
+			? sortProjects(state.projects).map((project) => project.id)
+			: getSortedTerminalSiblings(target.id).map((terminal) => terminal.id);
+	const index = siblings.indexOf(target.id);
+	const nextIndex = direction === "up" ? index - 1 : index + 1;
+	if (index < 0 || nextIndex < 0 || nextIndex >= siblings.length) {
+		return;
+	}
+
+	[siblings[index], siblings[nextIndex]] = [siblings[nextIndex]!, siblings[index]!];
+	if (target.kind === "project") {
+		state = await getRendererRpc().proxy.request.reorderProjects({
+			projectIds: siblings,
+		});
+		const project = findProject(target.id);
+		setStatus(project ? `Moved project '${project.name}'.` : "Moved project.");
+	} else {
+		const terminal = state.terminals.find(
+			(candidate) => candidate.id === target.id,
+		);
+		if (!terminal) {
+			return;
+		}
+		state = await getRendererRpc().proxy.request.reorderTerminals({
+			projectId: terminal.projectId,
+			terminalIds: siblings,
+		});
+		setStatus(`Moved console '${terminal.name}'.`);
+	}
+
+	renderTree();
+	renderInspector();
+	renderStatusBoard();
+}
+
+function getSortedTerminalSiblings(terminalId: string): TerminalRecord[] {
+	const terminal = state.terminals.find((candidate) => candidate.id === terminalId);
+	if (!terminal) {
+		return [];
+	}
+
+	return sortTerminals(
+		state.terminals.filter((candidate) => candidate.projectId === terminal.projectId),
+	);
+}
+
+async function reorderProjectsAroundTarget(
+	draggedProjectId: string,
+	targetProjectId: string,
+	placement: "before" | "after",
+): Promise<void> {
+	const orderedIds = moveIdAroundTarget(
+		sortProjects(state.projects).map((project) => project.id),
+		draggedProjectId,
+		targetProjectId,
+		placement,
+	);
+	if (!orderedIds) {
+		return;
+	}
+
+	state = await getRendererRpc().proxy.request.reorderProjects({
+		projectIds: orderedIds,
+	});
+	renderTree();
+	renderInspector();
+	renderStatusBoard();
+	const project = findProject(draggedProjectId);
+	setStatus(project ? `Moved project '${project.name}'.` : "Moved project.");
+}
+
+async function reorderTerminalsAroundTarget(
+	projectId: string,
+	draggedTerminalId: string,
+	targetTerminalId: string,
+	placement: "before" | "after",
+): Promise<void> {
+	const orderedIds = moveIdAroundTarget(
+		sortTerminals(
+			state.terminals.filter((terminal) => terminal.projectId === projectId),
+		).map((terminal) => terminal.id),
+		draggedTerminalId,
+		targetTerminalId,
+		placement,
+	);
+	if (!orderedIds) {
+		return;
+	}
+
+	state = await getRendererRpc().proxy.request.reorderTerminals({
+		projectId,
+		terminalIds: orderedIds,
+	});
+	renderTree();
+	renderInspector();
+	renderStatusBoard();
+	const terminal = state.terminals.find(
+		(candidate) => candidate.id === draggedTerminalId,
+	);
+	setStatus(terminal ? `Moved console '${terminal.name}'.` : "Moved console.");
+}
+
+function moveIdAroundTarget(
+	orderedIds: string[],
+	draggedId: string,
+	targetId: string,
+	placement: "before" | "after",
+): string[] | null {
+	const withoutDragged = orderedIds.filter((id) => id !== draggedId);
+	const targetIndex = withoutDragged.indexOf(targetId);
+	if (targetIndex < 0 || !orderedIds.includes(draggedId)) {
+		return null;
+	}
+
+	const insertIndex = placement === "before" ? targetIndex : targetIndex + 1;
+	withoutDragged.splice(insertIndex, 0, draggedId);
+	return withoutDragged.join("\0") === orderedIds.join("\0") ? null : withoutDragged;
 }
 
 async function renameProjectFromMenu(projectId: string): Promise<void> {
@@ -1969,7 +2336,9 @@ function renderTree(): void {
 						<button
 							type="button"
 							class="tree-project-button ${isProjectSelected ? "active" : ""}"
-							data-project-id="${project.id}">
+							data-project-id="${project.id}"
+							data-project-drag-id="${project.id}"
+							draggable="true">
 							<span
 								class="tree-project-toggle ${isCollapsed ? "collapsed" : ""}"
 								data-project-toggle-id="${project.id}"
@@ -1995,7 +2364,7 @@ function renderTree(): void {
 										const isTerminalEditing = editingTerminalId === terminal.id;
 									if (isTerminalEditing) {
 										return `
-											<li>
+											<li data-terminal-node-id="${terminal.id}" data-terminal-project-id="${terminal.projectId}">
 												<div class="tree-terminal-shell active">
 													<form class="tree-terminal-form" data-terminal-edit-form="${terminal.id}">
 															<input
@@ -2016,11 +2385,14 @@ function renderTree(): void {
 										}
 
 										return `
-											<li>
+											<li data-terminal-node-id="${terminal.id}" data-terminal-project-id="${terminal.projectId}">
 												<button
 													type="button"
 													class="tree-terminal-button ${selection?.kind === "terminal" && selection.id === terminal.id ? "active" : ""}"
-													data-terminal-id="${terminal.id}">
+													data-terminal-id="${terminal.id}"
+													data-terminal-drag-id="${terminal.id}"
+													data-terminal-project-id="${terminal.projectId}"
+													draggable="true">
 												<div class="tree-terminal-copy">
 													<span class="tree-terminal-title">${escapeHtml(terminal.name)}</span>
 													<span class="tree-terminal-detail">${escapeHtml(terminal.activity.summary)}</span>
@@ -2038,7 +2410,7 @@ function renderTree(): void {
 								.join("");
 
 				return `
-					<li class="tree-node">
+					<li class="tree-node" data-project-node-id="${project.id}">
 						<div class="tree-project-row" data-project-row-id="${project.id}">
 							${projectLabel}
 							<button
@@ -2367,11 +2739,25 @@ function findProjectByNameAndCreatedAt(name: string): ProjectRecord | undefined 
 }
 
 function sortProjects(projects: ProjectRecord[]): ProjectRecord[] {
-	return [...projects];
+	return [...projects].sort(
+		(left, right) =>
+			getSortOrder(left) - getSortOrder(right) ||
+			Date.parse(left.createdAt) - Date.parse(right.createdAt) ||
+			left.name.localeCompare(right.name),
+	);
 }
 
 function sortTerminals(terminals: TerminalRecord[]): TerminalRecord[] {
-	return [...terminals];
+	return [...terminals].sort(
+		(left, right) =>
+			getSortOrder(left) - getSortOrder(right) ||
+			Date.parse(left.createdAt) - Date.parse(right.createdAt) ||
+			left.name.localeCompare(right.name),
+	);
+}
+
+function getSortOrder(record: { sortOrder?: number }): number {
+	return Number.isFinite(record.sortOrder) ? record.sortOrder! : Number.MAX_SAFE_INTEGER;
 }
 
 function getTerminalRecency(terminal: TerminalRecord): number {

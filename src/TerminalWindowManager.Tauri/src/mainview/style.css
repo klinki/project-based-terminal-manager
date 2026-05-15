@@ -272,6 +272,35 @@ input {
 .tree-node {
 	display: grid;
 	gap: 0;
+	position: relative;
+}
+
+.tree-node.dragging,
+.tree-children li.dragging {
+	opacity: 0.5;
+}
+
+.tree-node.drop-before::before,
+.tree-node.drop-after::after,
+.tree-children li.drop-before::before,
+.tree-children li.drop-after::after {
+	content: "";
+	display: block;
+	height: 2px;
+	margin: 1px 8px;
+	border-radius: 999px;
+	background: var(--accent);
+	box-shadow: 0 0 0 1px rgba(94, 160, 255, 0.22);
+}
+
+.tree-terminal-button[draggable="true"],
+.tree-project-button[draggable="true"] {
+	cursor: grab;
+}
+
+.tree-terminal-button[draggable="true"]:active,
+.tree-project-button[draggable="true"]:active {
+	cursor: grabbing;
 }
 
 .tree-project-row {
@@ -1005,6 +1034,11 @@ input {
 
 .context-menu-item:hover {
 	background: rgba(255, 255, 255, 0.07);
+}
+
+.context-menu-item:disabled {
+	color: var(--muted);
+	background: transparent;
 }
 
 .context-menu-item.danger {

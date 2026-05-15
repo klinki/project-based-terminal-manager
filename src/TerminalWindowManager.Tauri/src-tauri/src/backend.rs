@@ -135,10 +135,12 @@ impl SessionManager {
 
         {
             let mut state = self.state.lock().map_err(|error| error.to_string())?;
+            let sort_order = next_project_sort_order(&state);
             state.projects.push(ProjectRecord {
                 id: new_uuid_string(),
                 name: trimmed_name.to_string(),
                 created_at: now_iso_string(),
+                sort_order,
                 default_cwd: None,
             });
         }
@@ -203,6 +205,31 @@ impl SessionManager {
         Ok(self.snapshot_state())
     }
 
+    pub fn reorder_projects(&self, project_ids: Vec<String>) -> Result<AppState, String> {
+        {
+            let mut state = self.state.lock().map_err(|error| error.to_string())?;
+            validate_reorder_ids(
+                state.projects.iter().map(|project| project.id.as_str()),
+                project_ids.iter().map(String::as_str),
+                "project",
+            )?;
+
+            let order_by_id = project_ids
+                .iter()
+                .enumerate()
+                .map(|(index, project_id)| (project_id.as_str(), index as u32))
+                .collect::<HashMap<&str, u32>>();
+            for project in &mut state.projects {
+                project.sort_order = *order_by_id.get(project.id.as_str()).ok_or_else(|| {
+                    format!("Project '{}' is missing from reorder request.", project.id)
+                })?;
+            }
+        }
+
+        self.persist_and_emit_state()?;
+        Ok(self.snapshot_state())
+    }
+
     pub fn create_terminal(
         &self,
         project_id: String,
@@ -242,6 +269,7 @@ impl SessionManager {
                     .map(|terminal| terminal.name.as_str()),
                 trimmed_name,
             );
+            let sort_order = next_terminal_sort_order(&state, &project_id);
             state.terminals.push(TerminalRecord {
                 id: new_uuid_string(),
                 project_id,
@@ -256,11 +284,53 @@ impl SessionManager {
                 progress_info: TerminalProgressInfo::none(),
                 last_exit_code: None,
                 created_at: now_iso_string(),
+                sort_order,
                 last_started_at: None,
                 diagnostic_log_path: None,
                 last_command_failure: None,
                 last_session_failure: None,
             });
+        }
+
+        self.persist_and_emit_state()?;
+        Ok(self.snapshot_state())
+    }
+
+    pub fn reorder_terminals(
+        &self,
+        project_id: String,
+        terminal_ids: Vec<String>,
+    ) -> Result<AppState, String> {
+        {
+            let mut state = self.state.lock().map_err(|error| error.to_string())?;
+            Self::find_project(&state, &project_id)?;
+            validate_reorder_ids(
+                state
+                    .terminals
+                    .iter()
+                    .filter(|terminal| terminal.project_id == project_id)
+                    .map(|terminal| terminal.id.as_str()),
+                terminal_ids.iter().map(String::as_str),
+                "terminal",
+            )?;
+
+            let order_by_id = terminal_ids
+                .iter()
+                .enumerate()
+                .map(|(index, terminal_id)| (terminal_id.as_str(), index as u32))
+                .collect::<HashMap<&str, u32>>();
+            for terminal in state
+                .terminals
+                .iter_mut()
+                .filter(|terminal| terminal.project_id == project_id)
+            {
+                terminal.sort_order = *order_by_id.get(terminal.id.as_str()).ok_or_else(|| {
+                    format!(
+                        "Terminal '{}' is missing from reorder request.",
+                        terminal.id
+                    )
+                })?;
+            }
         }
 
         self.persist_and_emit_state()?;
@@ -2575,6 +2645,62 @@ fn unique_terminal_name<'a>(
     format!("{} {}", prefix, highest_suffix + 1)
 }
 
+fn next_project_sort_order(state: &AppState) -> u32 {
+    state
+        .projects
+        .iter()
+        .map(|project| project.sort_order)
+        .max()
+        .map_or(0, |sort_order| sort_order.saturating_add(1))
+}
+
+fn next_terminal_sort_order(state: &AppState, project_id: &str) -> u32 {
+    state
+        .terminals
+        .iter()
+        .filter(|terminal| terminal.project_id == project_id)
+        .map(|terminal| terminal.sort_order)
+        .max()
+        .map_or(0, |sort_order| sort_order.saturating_add(1))
+}
+
+fn validate_reorder_ids<'a>(
+    existing_ids: impl Iterator<Item = &'a str>,
+    requested_ids: impl Iterator<Item = &'a str>,
+    label: &str,
+) -> Result<(), String> {
+    let existing = existing_ids.collect::<Vec<&str>>();
+    let requested = requested_ids.collect::<Vec<&str>>();
+    if existing.len() != requested.len() {
+        return Err(format!(
+            "Reorder request must include every {} exactly once.",
+            label
+        ));
+    }
+
+    let existing_set = existing
+        .iter()
+        .copied()
+        .collect::<std::collections::HashSet<&str>>();
+    let mut requested_set = std::collections::HashSet::new();
+    for requested_id in requested {
+        if !requested_set.insert(requested_id) {
+            return Err(format!(
+                "Reorder request contains duplicate {} id '{}'.",
+                label, requested_id
+            ));
+        }
+        if !existing_set.contains(requested_id) {
+            return Err(format!(
+                "Reorder request contains unknown {} id '{}'.",
+                label, requested_id
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 fn split_numbered_suffix(name: &str) -> (&str, Option<u32>) {
     let Some((prefix, suffix)) = name.rsplit_once(' ') else {
         return (name, None);
@@ -2839,6 +2965,7 @@ mod tests {
             progress_info: TerminalProgressInfo::none(),
             last_exit_code: None,
             created_at: "2026-04-13T10:00:00Z".to_string(),
+            sort_order: 0,
             last_started_at: None,
             diagnostic_log_path: None,
             last_command_failure: None,

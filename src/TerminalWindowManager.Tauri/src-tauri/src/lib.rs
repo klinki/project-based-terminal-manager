@@ -36,6 +36,14 @@ fn delete_project(
 }
 
 #[tauri::command]
+fn reorder_projects(
+    manager: State<'_, SessionManager>,
+    project_ids: Vec<String>,
+) -> Result<models::AppState, String> {
+    manager.reorder_projects(project_ids)
+}
+
+#[tauri::command]
 fn create_terminal(
     manager: State<'_, SessionManager>,
     project_id: String,
@@ -61,6 +69,15 @@ fn delete_terminal(
     terminal_id: String,
 ) -> Result<models::AppState, String> {
     manager.delete_terminal(terminal_id)
+}
+
+#[tauri::command]
+fn reorder_terminals(
+    manager: State<'_, SessionManager>,
+    project_id: String,
+    terminal_ids: Vec<String>,
+) -> Result<models::AppState, String> {
+    manager.reorder_terminals(project_id, terminal_ids)
 }
 
 #[tauri::command]
@@ -176,7 +193,10 @@ pub fn run() {
 
     let run_result = tauri::Builder::default()
         .setup(|app| {
-            let app_data_dir = app.path().app_data_dir().map_err(|error| error.to_string())?;
+            let app_data_dir = app
+                .path()
+                .app_data_dir()
+                .map_err(|error| error.to_string())?;
             diagnostics::configure_app_logging(app_data_dir.clone());
 
             let metadata_path = app_data_dir.join("terminal-metadata.json");
@@ -194,9 +214,11 @@ pub fn run() {
             create_project,
             rename_project,
             delete_project,
+            reorder_projects,
             create_terminal,
             rename_terminal,
             delete_terminal,
+            reorder_terminals,
             activate_terminal,
             send_input,
             resize_terminal,

@@ -75,6 +75,8 @@ pub struct ProjectRecord {
     #[serde(default = "now_iso_string")]
     pub created_at: String,
     #[serde(default)]
+    pub sort_order: u32,
+    #[serde(default)]
     pub default_cwd: Option<String>,
 }
 
@@ -130,6 +132,8 @@ pub struct TerminalRecord {
     #[serde(default = "now_iso_string")]
     pub created_at: String,
     #[serde(default)]
+    pub sort_order: u32,
+    #[serde(default)]
     pub last_started_at: Option<String>,
     #[serde(default)]
     pub diagnostic_log_path: Option<String>,
@@ -184,7 +188,9 @@ impl AppState {
             Some(&self.defaults.default_shell),
         );
 
-        for project in &mut self.projects {
+        let should_assign_project_order =
+            has_duplicate_sort_order(self.projects.iter().map(|project| project.sort_order));
+        for (index, project) in self.projects.iter_mut().enumerate() {
             if project.id.trim().is_empty() {
                 project.id = new_uuid_string();
             }
@@ -201,9 +207,13 @@ impl AppState {
             {
                 project.default_cwd = None;
             }
+            if should_assign_project_order {
+                project.sort_order = index as u32;
+            }
         }
 
-        for terminal in &mut self.terminals {
+        let should_assign_terminal_order = has_duplicate_terminal_sort_order(&self.terminals);
+        for (index, terminal) in self.terminals.iter_mut().enumerate() {
             if terminal.id.trim().is_empty() {
                 terminal.id = new_uuid_string();
             }
@@ -218,6 +228,9 @@ impl AppState {
             }
             if terminal.created_at.trim().is_empty() {
                 terminal.created_at = now_iso_string();
+            }
+            if should_assign_terminal_order {
+                terminal.sort_order = index as u32;
             }
 
             if matches!(
@@ -390,4 +403,18 @@ fn new_uuid_string() -> String {
 
 fn now_iso_string() -> String {
     Utc::now().to_rfc3339()
+}
+
+fn has_duplicate_sort_order(sort_orders: impl Iterator<Item = u32>) -> bool {
+    let mut seen = std::collections::HashSet::new();
+    sort_orders
+        .into_iter()
+        .any(|sort_order| !seen.insert(sort_order))
+}
+
+fn has_duplicate_terminal_sort_order(terminals: &[TerminalRecord]) -> bool {
+    let mut seen = std::collections::HashSet::new();
+    terminals
+        .iter()
+        .any(|terminal| !seen.insert((terminal.project_id.clone(), terminal.sort_order)))
 }
