@@ -1,0 +1,60 @@
+src/TerminalWindowManager.Tauri/src-tauri/src/lib.rs
+  s_28b6274bdacd96::t_a1d5401b54b097 44-45,81-82,196-199
+  s_28b6274bdacd96::t_f9893c6cbff5b7 39-43,75-80,217,221
+src/TerminalWindowManager.Tauri/src/mainview/main.ts
+  s_28b6274bdacd96::t_8f88730cab29f4 1011-1097,1099-1100
+  s_28b6274bdacd96::t_78266705bc29aa 1408-1409,1414-1419,1430
+  s_28b6274bdacd96::t_b8ae08cf1dfb5a 1508-1515
+  s_28b6274bdacd96::t_c9b8451af06ba1 2339-2341,2392-2395,2413
+  s_28b6274bdacd96::t_2651e559676eff 1442-1507,1516-1690
+  s_28b6274bdacd96::t_4b5f85ff629e2d 2742-2743,2745-2747,2751-2752,2754-2756
+  s_28b6274bdacd96::t_689eb40dc3afec 1141-1154
+  s_28b6274bdacd96::t_1f9596f7efe31c 2367,2388
+  s_28b6274bdacd96::t_4600f3936be71c 2744,2753,2757-2760
+  s_28b6274bdacd96::t_95c560a9184eff 1098
+  s_28b6274bdacd96::t_94806060c46b63 155-159,200
+src/TerminalWindowManager.Tauri/src-tauri/src/models.rs
+  s_28b6274bdacd96::t_d6973b91f0ba41 78-79,135,193,216
+  s_28b6274bdacd96::t_a1d5401b54b097 191-192,408-410
+  s_28b6274bdacd96::t_728012c76f9e2f 210-212,215,232-234,407,411-418
+docs/features/sidebar-drag-reorder/feature-spec.md
+  s_28b6274bdacd96::t_f526323b40f9b6 1-94
+src/TerminalWindowManager.Tauri/src/shared/types.ts
+  s_28b6274bdacd96::t_c7a3765a49890f 40,79,152,164-166
+src/TerminalWindowManager.Tauri/src/mainview/style.css
+  s_28b6274bdacd96::t_bfb7be09f2e764 1039-1043
+  s_28b6274bdacd96::t_8a123d5e1980ea 278-303
+src/TerminalWindowManager.Tauri/src-tauri/src/backend.rs
+  s_28b6274bdacd96::t_724d705840f450 138,143,208-222,272,287,299-327,332-337
+  s_28b6274bdacd96::t_a1d5401b54b097 223-232,328-331,2648-2703,2968
+  s_28b6274bdacd96::t_947ee29013dd43 339
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "818747b31b3712ac680f7e62f775571cbbcc8677",
+  "prompts": {
+    "0a29b1068279afdd": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df27a-8764-7860-9d3e-2ce59a955137",
+        "model": "gpt-5.5"
+      },
+      "human_author": "David Klingenberg <dklingenberg@gmail.com>",
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 0,
+      "overriden_lines": 0
+    }
+  },
+  "sessions": {
+    "s_28b6274bdacd96": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e2a84-29cc-79d3-adc7-7e8afbcc9f98",
+        "model": "gpt-5.5"
+      },
+      "human_author": "David Klingenberg <dklingenberg@gmail.com>"
+    }
+  }
+}
