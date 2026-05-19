@@ -1,4 +1,5 @@
 mod backend;
+mod crash_reporting;
 mod diagnostics;
 mod models;
 #[cfg(windows)]
@@ -173,6 +174,14 @@ fn log_renderer_event(
     detail: Option<String>,
     stack: Option<String>,
 ) -> Result<serde_json::Value, String> {
+    crash_reporting::capture_renderer_event(
+        &level,
+        &source,
+        &message,
+        terminal_id.as_deref(),
+        detail.as_deref(),
+        stack.as_deref(),
+    );
     manager.log_renderer_event(level, source, message, terminal_id, detail, stack);
     Ok(serde_json::json!({ "ok": true }))
 }
@@ -192,6 +201,25 @@ pub fn run() {
     let fallback_app_data_dir =
         diagnostics::default_app_data_dir(context.config().identifier.as_str());
     diagnostics::configure_app_logging(fallback_app_data_dir.clone());
+    let _sentry_guard = match crash_reporting::configure() {
+        Ok(guard) => guard,
+        Err(error) => {
+            let _ = diagnostics::append_app_log_entry(
+                &fallback_app_data_dir,
+                "error",
+                "sentry",
+                "Crash reporting could not be initialized.",
+                None,
+                Some(&error),
+                None,
+            );
+            eprintln!(
+                "Terminal Window Manager crash reporting disabled: {}",
+                error
+            );
+            None
+        }
+    };
 
     let run_result = tauri::Builder::default()
         .setup(|app| {
@@ -249,6 +277,12 @@ pub fn run() {
             None,
             Some(&detail),
             None,
+        );
+        crash_reporting::capture_native_event(
+            "fatal",
+            "tauri_run",
+            "The Tauri runtime exited with an error.",
+            Some(&detail),
         );
         eprintln!("Terminal Window Manager Tauri failed: {}", detail);
     }
