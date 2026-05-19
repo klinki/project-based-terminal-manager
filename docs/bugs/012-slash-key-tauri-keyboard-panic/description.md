@@ -4,7 +4,7 @@
 Slash key can crash the Tauri application
 
 ## Status
-- awaiting-user-confirmation
+- awaiting-user-confirmation; `fix-attempt-002.md` replaced the vendored-TAO workaround with an app-level Windows message guard.
 
 ## Reported Symptoms
 - Typing or pressing `/` sometimes terminates the whole application.
@@ -30,6 +30,13 @@ Slash key can crash the Tauri application
 - Press `/` through the same layout/modifier/dead-key sequence that normally produces it.
 - Confirm a new `app-crash-*.log` appears under `%APPDATA%/dev.projectwm.twm-tauri`.
 
+More detailed reproduction scenarios to try:
+- Czech layout plus slash entry: switch Windows input to Czech (`0405:00000405`), focus the terminal, start a Copilot prompt, then enter slash using the physical key/modifier combination normally used for `/` on that layout. Repeat after opening and closing the project/settings UI so focus moves between native WebView and terminal content.
+- Dead-key precondition: with Czech layout active, press a dead-key accent sequence such as acute/caron/ring, then press the slash-producing key sequence in the terminal. Also try the inverse order: slash-producing key sequence, then a dead key, then slash again.
+- AltGr/fake-control precondition: with Czech layout active, try slash-related punctuation using Right Alt/AltGr and then immediately press `/` or Enter in the Copilot prompt. This targets TAO's Windows keyboard path that handles synthetic Ctrl from AltGr.
+- Focus/timing precondition: while Copilot shows the indeterminate progress state, Alt+Tab away and back, click the terminal, then press the slash-producing sequence. This targets a possible `WM_DEADCHAR` arriving after TAO has already cleared pending key state.
+- Confirmation signal: after each attempt, check `%APPDATA%/dev.projectwm.twm-tauri` for a fresh `app-crash-*.log` and `app.log` entries containing `tao` and `keyboard.rs`.
+
 ## Affected Area
 - Windows desktop keyboard event handling in the Tauri runtime dependency chain.
 - Current lockfile resolves `tauri 2.10.3`, `wry 0.54.4`, and `tao 0.34.8`.
@@ -39,6 +46,6 @@ Slash key can crash the Tauri application
 - A local workaround in frontend `keydown` handlers would not cover all native keyboard messages.
 
 ## Open Questions
-- Whether the local TAO patch fully resolves the user's original `/` key crash in the installed/runtime app.
+- Whether the app-level `WM_DEADCHAR` guard fully resolves the user's original `/` key crash in the installed/runtime app.
 - The exact precondition: focused element, active layout, modifiers, Copilot prompt state, and whether a preceding dead key/AltGr sequence is involved.
 - Whether the indeterminate progress state is only a coincident Copilot signal or contributes by changing focus/timing around native keyboard messages.

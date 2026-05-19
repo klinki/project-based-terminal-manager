@@ -36,3 +36,10 @@
   - `C:\Users\david\AppData\Roaming\dev.projectwm.twm-tauri\app-crash-20260519T124943Z.log`
 - Source line:
   - `C:\Users\david\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tao-0.34.8\src\platform_impl\windows\keyboard.rs`
+
+## 2026-05-19 Update
+- The latest crates available locally are `tauri 2.11.2` and `tao 0.35.2`.
+- Upstream `tao 0.35.2` still contains the unchecked `self.event_info.take().unwrap()` in the Windows `WM_DEADCHAR | WM_SYSDEADCHAR` branch.
+- Cargo cannot patch a single source file from a transitive crate; `[patch.crates-io]` requires replacing the crate source, which is why `fix-attempt-001.md` duplicated the whole TAO crate.
+- A smaller app-level mitigation is available on Windows: subclass the Tauri window and return `LRESULT(0)` for `WM_DEADCHAR` / `WM_SYSDEADCHAR` before TAO sees those messages.
+- This should preserve app behavior because TAO's own dead-character branch already returns `LRESULT(0)`, and this app does not use native TAO dead-key events for terminal input.

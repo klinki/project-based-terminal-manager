@@ -1,6 +1,8 @@
 mod backend;
 mod diagnostics;
 mod models;
+#[cfg(windows)]
+mod windows_keyboard_guard;
 
 use backend::SessionManager;
 use tauri::{Manager, State, WebviewWindow};
@@ -207,6 +209,10 @@ pub fn run() {
 
             let session_manager = SessionManager::new(app.handle().clone(), metadata_path)?;
             app.manage(session_manager);
+
+            #[cfg(windows)]
+            windows_keyboard_guard::install_for_existing_windows(app)?;
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
