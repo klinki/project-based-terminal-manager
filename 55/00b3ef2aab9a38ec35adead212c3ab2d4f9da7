@@ -1,0 +1,47 @@
+third_party/tao/src/platform_impl/windows/keyboard.rs
+  s_499c3e901b6888::t_df02c98390b2e7 1-821
+docs/bugs/012-slash-key-tauri-keyboard-panic/fix-attempt-001.md
+  s_499c3e901b6888::t_d8c783394aede8 1-3,5-13,15-29,36-37,41-42
+  s_499c3e901b6888::t_94ba8f549f0c9d 4,14,30-31,33-35,38-39,43-44
+  s_499c3e901b6888::t_2a86303137bfae 32,40
+src/TerminalWindowManager.Tauri/src-tauri/Cargo.toml
+  s_499c3e901b6888::t_04a85fd7279fd5 3,16,19-20
+  s_499c3e901b6888::t_df02c98390b2e7 22-24
+docs/bugs/012-slash-key-tauri-keyboard-panic/status.md
+  s_499c3e901b6888::t_86fabd2b5e330e 27,33
+  s_499c3e901b6888::t_94ba8f549f0c9d 4,16,20,26
+  s_499c3e901b6888::t_487c1a70d18849 29,35
+  s_499c3e901b6888::t_80a737150a9424 28,34
+  s_499c3e901b6888::t_2a86303137bfae 21
+  s_499c3e901b6888::t_d8c783394aede8 1-3,5-15,17-19,22-25,30-32
+third_party/tao/.cargo-ok
+  s_499c3e901b6888::t_fe2bb6b3bd9e56 1
+docs/bugs/012-slash-key-tauri-keyboard-panic/initial-findings.md
+  s_499c3e901b6888::t_487c1a70d18849 31
+  s_499c3e901b6888::t_80a737150a9424 12-14,24,30
+  s_499c3e901b6888::t_d8c783394aede8 1-9,15-22,25-28,32-38
+  s_499c3e901b6888::t_86fabd2b5e330e 10-11,23,29
+src/TerminalWindowManager.Tauri/package.json
+  s_499c3e901b6888::t_8f8076def9282a 19,24
+docs/bugs/012-slash-key-tauri-keyboard-panic/description.md
+  s_499c3e901b6888::t_94ba8f549f0c9d 7,42
+  s_499c3e901b6888::t_d8c783394aede8 1-6,8-11,14-26,31-41
+  s_499c3e901b6888::t_80a737150a9424 13,27-28,43-44
+  s_499c3e901b6888::t_86fabd2b5e330e 12,29-30
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.9",
+  "base_commit_sha": "5500b3ef2aab9a38ec35adead212c3ab2d4f9da7",
+  "prompts": {},
+  "sessions": {
+    "s_499c3e901b6888": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e4049-896e-7e51-b3b7-56e3f67a15f6",
+        "model": "gpt-5.5"
+      },
+      "human_author": "David Klingenberg <dklingenberg@gmail.com>"
+    }
+  }
+}
