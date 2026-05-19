@@ -1,0 +1,34 @@
+docs/bugs/012-slash-key-tauri-keyboard-panic/fix-attempt-002.md
+  s_39cce9d6603163::t_3004269387a776 1-3,5-37,44-45,50-51,54-55,57-59
+  s_39cce9d6603163::t_e6a5c4d2ea16aa 4,38-43,46-49,52-53,56
+src/TerminalWindowManager.Tauri/src-tauri/src/windows_keyboard_guard.rs
+  s_39cce9d6603163::t_d02d74890be3d2 1-84
+src/TerminalWindowManager.Tauri/src-tauri/src/lib.rs
+  s_39cce9d6603163::t_d02d74890be3d2 4-5,212-215
+docs/bugs/012-slash-key-tauri-keyboard-panic/initial-findings.md
+  s_39cce9d6603163::t_3004269387a776 39-45
+docs/bugs/012-slash-key-tauri-keyboard-panic/status.md
+  s_39cce9d6603163::t_3004269387a776 7,22,32-33
+  s_39cce9d6603163::t_e6a5c4d2ea16aa 16,23,34,41
+docs/bugs/012-slash-key-tauri-keyboard-panic/description.md
+  s_39cce9d6603163::t_e6a5c4d2ea16aa 7,49
+  s_39cce9d6603163::t_3004269387a776 33-39
+src/TerminalWindowManager.Tauri/src-tauri/Cargo.toml
+  s_39cce9d6603163::t_d02d74890be3d2 20-24
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.9",
+  "base_commit_sha": "7188329193640a13a7db60a284638b76ff4aa4a3",
+  "prompts": {},
+  "sessions": {
+    "s_39cce9d6603163": {
+      "agent_id": {
+        "tool": "github-copilot-cli",
+        "id": "167f3927-2e4c-4d92-81b0-7383747ea972",
+        "model": "gpt-5.5"
+      },
+      "human_author": "David Klingenberg <dklingenberg@gmail.com>"
+    }
+  }
+}
