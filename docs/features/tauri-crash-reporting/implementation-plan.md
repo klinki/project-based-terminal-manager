@@ -32,6 +32,33 @@ bun run dev
 - To disable reporting even when a DSN is present, set `TWM_DISABLE_CRASH_REPORTING=1`.
 - `SENTRY_DSN` and `SENTRY_ENVIRONMENT` are accepted as fallback environment variable names.
 
+## CI And Release Build Setup
+- Store the DSN as a repository or environment secret named `TWM_SENTRY_DSN`.
+- Store the environment name as a non-secret variable or workflow `env` value named `TWM_SENTRY_ENVIRONMENT`.
+- Do not commit the DSN to tracked files.
+- Pass both values only to jobs that build or package the Tauri desktop app.
+- Keep pull-request validation builds without the DSN unless remote crash-reporting coverage is needed for those builds.
+
+Example GitHub Actions build environment:
+
+```yaml
+env:
+  TWM_SENTRY_DSN: ${{ secrets.TWM_SENTRY_DSN }}
+  TWM_SENTRY_ENVIRONMENT: production
+
+steps:
+  - name: Build Tauri desktop app
+    run: .\build.ps1 -Target Desktop-Tauri
+```
+
+For local release builds, set the same variables in PowerShell before calling [build.ps1](../../../build.ps1):
+
+```powershell
+$env:TWM_SENTRY_DSN = "<your Sentry DSN>"
+$env:TWM_SENTRY_ENVIRONMENT = "production"
+.\build.ps1 -Target Desktop-Tauri
+```
+
 ## Privacy And Data Boundaries
 - Do not enable `send_default_pii`.
 - Do not send terminal output buffers, PowerShell command text, working directories, or per-session diagnostics streams to Sentry.
