@@ -198,6 +198,7 @@ let settingsShellMenuOpen = false;
 let lastRenderedTreeMarkup = "";
 let titlebarDragState: TitlebarDragState | null = null;
 let sidebarDragState: SidebarDragState = null;
+let closeConfirmationInProgress = false;
 
 const terminalViews = new Map<string, TerminalView>();
 const terminalOutputBuffers = new Map<string, string[]>();
@@ -871,10 +872,20 @@ winMaximize.addEventListener("click", () => {
 });
 
 winClose.addEventListener("click", () => {
-	void runUiAction("Close window", async () => {
-		await getCurrentWindow().close();
-	});
+	void runUiAction("Close application", requestApplicationClose);
 });
+
+void getCurrentWindow()
+	.onCloseRequested((event) => {
+		event.preventDefault();
+		void runUiAction("Close application", requestApplicationClose);
+	})
+	.catch((error) => {
+		reportRendererIssue("warn", "register-close-confirmation", error, {
+			detail: "Failed to register the application close confirmation handler.",
+			updateStatus: false,
+		});
+	});
 
 newProjectButton.addEventListener("click", () => {
 	void runUiAction("Create project", createProjectAndBeginRename);
@@ -1798,6 +1809,29 @@ async function deleteTerminal(terminalId: string): Promise<void> {
 	renderInspector();
 	renderStatusBoard();
 	setStatus(`Deleted console '${terminal.name}'.`);
+}
+
+async function requestApplicationClose(): Promise<void> {
+	if (closeConfirmationInProgress) {
+		return;
+	}
+
+	closeConfirmationInProgress = true;
+	try {
+		const confirmed = await showConfirmationDialog({
+			title: "Close application?",
+			message:
+				"Close Terminal Window Manager? Running consoles and active terminal sessions will be stopped.",
+			confirmLabel: "Close application",
+		});
+		if (!confirmed) {
+			return;
+		}
+
+		await getCurrentWindow().destroy();
+	} finally {
+		closeConfirmationInProgress = false;
+	}
 }
 
 function showConfirmationDialog(options: {
