@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.4.0](https://github.com/klinki/project-based-terminal-manager/compare/v0.3.0...v0.4.0) (2026-05-21)
+
+
+### Features
+
+* Add opt-in Sentry crash reporting ([4b4a5a3](https://github.com/klinki/project-based-terminal-manager/commit/4b4a5a347cabe67caa15fa9088074ad7ccd26b9f))
+* Add sidebar drag reordering ([818747b](https://github.com/klinki/project-based-terminal-manager/commit/818747b31b3712ac680f7e62f775571cbbcc8677))
+* Show crash dialog for Tauri failures ([22c805b](https://github.com/klinki/project-based-terminal-manager/commit/22c805b704ce71aced43e6a381710a6149c8e2ca))
+
+
+### Bug Fixes
+
+* ensure unique console names ([8361e2b](https://github.com/klinki/project-based-terminal-manager/commit/8361e2bbed20cc1590b7f349ca35c678f6a57408))
+* **frontend:** Fix terminal decoding and dialog submit ([ea4e159](https://github.com/klinki/project-based-terminal-manager/commit/ea4e1599b589dd724ef350dd00f95226c3b47b12))
+* Guard TAO dead-key keyboard panic ([5500b3e](https://github.com/klinki/project-based-terminal-manager/commit/5500b3ef2aab9a38ec35adead212c3ab2d4f9da7))
+* reduce terminal output backpressure ([4d5f758](https://github.com/klinki/project-based-terminal-manager/commit/4d5f758769acbcf4f716c4649d34e85b3d61f4c4))
+* Refresh Windows PATH for terminal sessions ([815ca6e](https://github.com/klinki/project-based-terminal-manager/commit/815ca6e2c579a1a263b24e5a2a0c8b54ad04eff1))
+* Replace vendored TAO keyboard panic guard ([7188329](https://github.com/klinki/project-based-terminal-manager/commit/7188329193640a13a7db60a284638b76ff4aa4a3))
+
 ## [0.3.0](https://github.com/klinki/project-based-terminal-manager/compare/v0.2.0...v0.3.0) (2026-04-14)
 
 
