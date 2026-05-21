@@ -1,0 +1,31 @@
+docs/bugs/013-terminal-text-selection-regression/initial-findings.md
+  s_524f5d5356ac00::t_be60457d279e28 1-11,13-21
+  s_524f5d5356ac00::t_1f523e98ada5b1 12,22
+docs/bugs/013-terminal-text-selection-regression/status.md
+  s_524f5d5356ac00::t_1f523e98ada5b1 4,7,16,19,23
+  s_524f5d5356ac00::t_be60457d279e28 1-3,5-6,8-15,17-18,20-22
+docs/bugs/013-terminal-text-selection-regression/fix-attempt-001.md
+  s_524f5d5356ac00::t_1f523e98ada5b1 4,14,19,30-31,34,37
+  s_524f5d5356ac00::t_be60457d279e28 1-3,5-13,15-18,20-29,32-33,35-36
+docs/bugs/013-terminal-text-selection-regression/description.md
+  s_524f5d5356ac00::t_be60457d279e28 1-32
+src/TerminalWindowManager.Tauri/src/mainview/main.ts
+  s_524f5d5356ac00::t_fbec97473bf6d7 162,384,403-418
+  s_524f5d5356ac00::t_5be72f5d6360b5 363,421-434
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.11",
+  "base_commit_sha": "e96ca9af326a499464420b568ff955bc0be2c949",
+  "prompts": {},
+  "sessions": {
+    "s_524f5d5356ac00": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e49b1-854a-73a2-b8c5-ca75b2c9b96c",
+        "model": "gpt-5.5"
+      },
+      "human_author": "David Klingenberg <dklingenberg@gmail.com>"
+    }
+  }
+}
