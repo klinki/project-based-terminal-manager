@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+#[cfg(windows)]
+use std::collections::HashSet;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -757,6 +759,7 @@ impl SessionManager {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        apply_refreshed_path_environment(&mut command);
 
         if let Some(launch_cwd) = &context.launch_cwd {
             command.args(["--cwd", launch_cwd]);
@@ -2584,6 +2587,75 @@ fn taskbar_progress_priority(status: TaskbarProgressStatus) -> u8 {
 
 fn new_uuid_string() -> String {
     uuid::Uuid::new_v4().to_string()
+}
+
+#[cfg(windows)]
+fn apply_refreshed_path_environment(command: &mut Command) {
+    if let Some(path) = create_refreshed_windows_path() {
+        command.env("PATH", path);
+    }
+}
+
+#[cfg(not(windows))]
+fn apply_refreshed_path_environment(_command: &mut Command) {}
+
+#[cfg(windows)]
+fn create_refreshed_windows_path() -> Option<String> {
+    let mut entries = Vec::new();
+    let mut seen = HashSet::new();
+
+    append_path_entries(
+        &mut entries,
+        &mut seen,
+        read_registry_path(
+            winreg::enums::HKEY_LOCAL_MACHINE,
+            r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment",
+        ),
+    );
+    append_path_entries(
+        &mut entries,
+        &mut seen,
+        read_registry_path(winreg::enums::HKEY_CURRENT_USER, "Environment"),
+    );
+    append_path_entries(&mut entries, &mut seen, std::env::var_os("PATH"));
+
+    if entries.is_empty() {
+        None
+    } else {
+        Some(entries.join(";"))
+    }
+}
+
+#[cfg(windows)]
+fn read_registry_path(hkey: winreg::HKEY, subkey: &str) -> Option<std::ffi::OsString> {
+    use winreg::RegKey;
+
+    let key = RegKey::predef(hkey).open_subkey(subkey).ok()?;
+    key.get_value("Path").ok()
+}
+
+#[cfg(windows)]
+fn append_path_entries(
+    entries: &mut Vec<String>,
+    seen: &mut HashSet<String>,
+    path_value: Option<std::ffi::OsString>,
+) {
+    let Some(path_value) = path_value else {
+        return;
+    };
+
+    for entry in std::env::split_paths(&path_value) {
+        let entry = entry.display().to_string();
+        let trimmed = entry.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let key = trimmed.trim_end_matches(['\\', '/']).to_ascii_lowercase();
+        if seen.insert(key) {
+            entries.push(trimmed.to_string());
+        }
+    }
 }
 
 fn now_iso_string() -> String {
