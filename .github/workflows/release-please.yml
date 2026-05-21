@@ -51,6 +51,9 @@ jobs:
 
       - name: Build the Tauri Windows release package
         shell: pwsh
+        env:
+          TWM_SENTRY_DSN: ${{ secrets.TWM_SENTRY_DSN }}
+          TWM_SENTRY_ENVIRONMENT: ${{ secrets.TWM_SENTRY_ENVIRONMENT }}
         run: .\build.ps1 -Target Desktop-Tauri -ForceFrontendInstall
 
       - name: Upload Tauri release artifacts
