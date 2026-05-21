@@ -1,0 +1,27 @@
+src/TerminalWindowManager.Tauri/src-tauri/src/crash_dialog.rs
+  s_39cce9d6603163::t_47ca4539f14cb7 1-262
+src/TerminalWindowManager.Tauri/src-tauri/src/diagnostics.rs
+  s_39cce9d6603163::t_794eb856fa95a4 7,11,18,45-46,62-69,75-77,85,89-97,99-106,196-218,313
+src/TerminalWindowManager.Tauri/src-tauri/Cargo.toml
+  s_39cce9d6603163::t_794eb856fa95a4 30
+src/TerminalWindowManager.Tauri/src-tauri/src/lib.rs
+  s_39cce9d6603163::t_794eb856fa95a4 2,288-303
+src/TerminalWindowManager.Tauri/src-tauri/src/crash_reporting.rs
+  s_39cce9d6603163::t_794eb856fa95a4 2,76-80
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.11",
+  "base_commit_sha": "22c805b704ce71aced43e6a381710a6149c8e2ca",
+  "prompts": {},
+  "sessions": {
+    "s_39cce9d6603163": {
+      "agent_id": {
+        "tool": "github-copilot-cli",
+        "id": "167f3927-2e4c-4d92-81b0-7383747ea972",
+        "model": "gpt-5.5"
+      },
+      "human_author": "David Klingenberg <dklingenberg@gmail.com>"
+    }
+  }
+}
