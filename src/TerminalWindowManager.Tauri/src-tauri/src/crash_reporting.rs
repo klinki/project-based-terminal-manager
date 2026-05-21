@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::time::Duration;
 
 use sentry::{protocol::Value, types::Dsn, ClientInitGuard, ClientOptions, Level};
 
@@ -70,6 +71,12 @@ pub fn capture_native_event(level: &str, source: &str, message: &str, detail: Op
             sentry::capture_message(message, sentry_level);
         },
     );
+}
+
+pub fn flush_pending_events(timeout: Duration) {
+    if let Some(client) = sentry::Hub::current().client() {
+        let _ = client.flush(Some(timeout));
+    }
 }
 
 fn configured_dsn() -> Result<Option<Dsn>, String> {

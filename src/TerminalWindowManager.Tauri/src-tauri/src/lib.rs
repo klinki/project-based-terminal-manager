@@ -1,4 +1,5 @@
 mod backend;
+mod crash_dialog;
 mod crash_reporting;
 mod diagnostics;
 mod models;
@@ -284,6 +285,22 @@ pub fn run() {
             "The Tauri runtime exited with an error.",
             Some(&detail),
         );
+        let crash_snapshot_path = diagnostics::write_crash_snapshot(
+            &fallback_app_data_dir,
+            "fatal",
+            "tauri_run",
+            "The Tauri runtime exited with an error.",
+            Some(serde_json::json!({ "error": detail })),
+            None,
+        )
+        .ok();
+        crash_reporting::flush_pending_events(std::time::Duration::from_secs(2));
+        crash_dialog::show_once(&crash_dialog::CrashDialogContext {
+            message: "The Tauri runtime exited with an error.",
+            detail: Some(&detail),
+            app_data_dir: &fallback_app_data_dir,
+            crash_snapshot_path: crash_snapshot_path.as_deref(),
+        });
         eprintln!("Terminal Window Manager Tauri failed: {}", detail);
     }
 }

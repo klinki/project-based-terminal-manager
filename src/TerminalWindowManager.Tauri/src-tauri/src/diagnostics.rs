@@ -4,16 +4,18 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, Once, OnceLock};
 
+use crate::crash_dialog::{self, CrashDialogContext};
 use chrono::Utc;
 use once_cell::sync::Lazy;
 use regex::Regex;
-use serde_json::json;
+use serde_json::{json, Value};
 
 pub const MAX_OUTPUT_LINES: usize = 100;
 pub const RECENT_OUTPUT_EXCERPT_LINES: usize = 20;
 const APP_LOG_FILE_NAME: &str = "app.log";
 
 static APP_LOG_DIRECTORY: OnceLock<Mutex<PathBuf>> = OnceLock::new();
+static MAIN_THREAD_ID: OnceLock<std::thread::ThreadId> = OnceLock::new();
 static PANIC_HOOK_INSTALLED: Once = Once::new();
 
 static ANSI_PATTERN: Lazy<Regex> = Lazy::new(|| {
@@ -40,6 +42,8 @@ pub fn create_app_log_path(app_data_dir: &Path) -> PathBuf {
 }
 
 pub fn configure_app_logging(app_data_dir: PathBuf) {
+    let _ = MAIN_THREAD_ID.get_or_init(|| std::thread::current().id());
+
     if let Some(directory) = APP_LOG_DIRECTORY.get() {
         if let Ok(mut current_directory) = directory.lock() {
             *current_directory = app_data_dir.clone();
@@ -55,16 +59,22 @@ pub fn configure_app_logging(app_data_dir: PathBuf) {
                 .name()
                 .map(ToString::to_string)
                 .unwrap_or_else(|| "unnamed".to_string());
-            let location = panic_info
-                .location()
-                .map(|location| format!("{}:{}:{}", location.file(), location.line(), location.column()));
+            let location = panic_info.location().map(|location| {
+                format!(
+                    "{}:{}:{}",
+                    location.file(),
+                    location.line(),
+                    location.column()
+                )
+            });
             let payload = extract_panic_payload(panic_info);
             let backtrace = Backtrace::force_capture().to_string();
             let detail = json!({
                 "thread": thread_name,
                 "location": location,
-            })
-            .to_string();
+            });
+            let dialog_detail = create_panic_dialog_detail(&thread_name, location.as_deref());
+            let detail_text = detail.to_string();
 
             let _ = append_app_log_entry(
                 &app_data_dir,
@@ -72,26 +82,28 @@ pub fn configure_app_logging(app_data_dir: PathBuf) {
                 "panic_hook",
                 &payload,
                 None,
-                Some(&detail),
+                Some(&detail_text),
                 Some(&backtrace),
             );
 
-            let crash_snapshot = json!({
-                "timestamp": Utc::now().to_rfc3339(),
-                "level": "fatal",
-                "source": "panic_hook",
-                "message": payload,
-                "detail": {
-                    "thread": thread_name,
-                    "location": location,
-                },
-                "stack": backtrace,
-            });
+            let crash_snapshot_path = write_crash_snapshot(
+                &app_data_dir,
+                "fatal",
+                "panic_hook",
+                &payload,
+                Some(detail),
+                Some(&backtrace),
+            )
+            .ok();
 
-            let crash_path = create_panic_snapshot_path(&app_data_dir);
-            let serialized = serde_json::to_string_pretty(&crash_snapshot)
-                .unwrap_or_else(|_| "Failed to serialize panic snapshot.".to_string());
-            let _ = fs::write(crash_path, serialized);
+            if is_main_app_thread() {
+                crash_dialog::show_once(&CrashDialogContext {
+                    message: &payload,
+                    detail: Some(&dialog_detail),
+                    app_data_dir: &app_data_dir,
+                    crash_snapshot_path: crash_snapshot_path.as_deref(),
+                });
+            }
         }));
     });
 }
@@ -179,6 +191,29 @@ pub fn create_recent_output_excerpt(lines: &[String], pending_line: &str) -> Str
         .join("\n")
         .trim()
         .to_string()
+}
+
+pub fn write_crash_snapshot(
+    app_data_dir: &Path,
+    level: &str,
+    source: &str,
+    message: &str,
+    detail: Option<Value>,
+    stack: Option<&str>,
+) -> io::Result<PathBuf> {
+    let crash_snapshot = json!({
+        "timestamp": Utc::now().to_rfc3339(),
+        "level": level,
+        "source": source,
+        "message": message,
+        "detail": detail,
+        "stack": stack,
+    });
+    let crash_path = create_crash_snapshot_path(app_data_dir);
+    let serialized = serde_json::to_string_pretty(&crash_snapshot)
+        .unwrap_or_else(|_| "Failed to serialize crash snapshot.".to_string());
+    fs::write(&crash_path, serialized)?;
+    Ok(crash_path)
 }
 
 pub fn create_power_shell_bootstrap_script(
@@ -275,7 +310,7 @@ fn current_app_log_directory() -> PathBuf {
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
 }
 
-fn create_panic_snapshot_path(app_data_dir: &Path) -> PathBuf {
+fn create_crash_snapshot_path(app_data_dir: &Path) -> PathBuf {
     let timestamp = Utc::now().format("%Y%m%dT%H%M%SZ");
     app_data_dir.join(format!("app-crash-{}.log", timestamp))
 }
@@ -288,4 +323,17 @@ fn extract_panic_payload(panic_info: &std::panic::PanicHookInfo<'_>) -> String {
     } else {
         "The application panicked with a non-string payload.".to_string()
     }
+}
+
+fn create_panic_dialog_detail(thread_name: &str, location: Option<&str>) -> String {
+    match location {
+        Some(location) => format!("Thread: {thread_name}\nLocation: {location}"),
+        None => format!("Thread: {thread_name}"),
+    }
+}
+
+fn is_main_app_thread() -> bool {
+    MAIN_THREAD_ID
+        .get()
+        .is_some_and(|main_thread_id| *main_thread_id == std::thread::current().id())
 }
