@@ -13,18 +13,17 @@ $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
 $repoRoot = Split-Path -Parent $PSCommandPath
-$tauriDir = Join-Path $repoRoot "src\TerminalWindowManager.Tauri"
-$conPtyHostProject = Join-Path $repoRoot "src\TerminalWindowManager.ConPTYHost\TerminalWindowManager.ConPTYHost.csproj"
-$dotNetProjects = @(
-    Join-Path $repoRoot "src\TerminalWindowManager.Core\TerminalWindowManager.Core.csproj"
-    $conPtyHostProject
-    Join-Path $repoRoot "tests\TerminalWindowManager.Core.Tests\TerminalWindowManager.Core.Tests.csproj"
+$tauriDir = [System.IO.Path]::Combine($repoRoot, "src", "TerminalWindowManager.Tauri")
+$conPtyHostProject = [System.IO.Path]::Combine($repoRoot, "src", "TerminalWindowManager.ConPTYHost", "TerminalWindowManager.ConPTYHost.csproj")
+$isWindowsHost = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform(
+    [System.Runtime.InteropServices.OSPlatform]::Windows
 )
-
-function Assert-WindowsHost {
-    if ($env:OS -ne "Windows_NT") {
-        throw "The active TerminalWindowManager projects target Windows-only components (ConPTY and the Tauri desktop shell). Run this script on Windows."
-    }
+$dotNetProjects = @(
+    [System.IO.Path]::Combine($repoRoot, "src", "TerminalWindowManager.Core", "TerminalWindowManager.Core.csproj")
+    [System.IO.Path]::Combine($repoRoot, "tests", "TerminalWindowManager.Core.Tests", "TerminalWindowManager.Core.Tests.csproj")
+)
+if ($isWindowsHost) {
+    $dotNetProjects += $conPtyHostProject
 }
 
 function Assert-CommandAvailable {
@@ -125,7 +124,6 @@ function Ensure-FrontendDependencies {
 }
 
 function Build-TauriShell {
-    Assert-CommandAvailable -CommandName "dotnet" -InstallHint "Install the .NET 10 SDK and make sure 'dotnet' is on PATH."
     Assert-CommandAvailable -CommandName "cargo" -InstallHint "Install the Rust toolchain and make sure 'cargo' is on PATH for Tauri builds."
     Ensure-FrontendDependencies -ProjectDirectory $tauriDir -ProjectLabel "Tauri"
 
@@ -139,8 +137,6 @@ function Build-TauriDesktop {
     Ensure-FrontendDependencies -ProjectDirectory $tauriDir -ProjectLabel "Tauri"
     Invoke-ExternalCommand -FilePath "bun" -ArgumentList @("run", "build:desktop") -WorkingDirectory $tauriDir
 }
-
-Assert-WindowsHost
 
 switch ($Target) {
     "All" {
@@ -170,12 +166,16 @@ Write-Host "Build completed successfully." -ForegroundColor Green
 Write-Host "Target: $Target"
 
 if ($Target -eq "All" -or $Target -eq "DotNet") {
-    Write-Host "ConPTY host output: src\TerminalWindowManager.ConPTYHost\bin\$Configuration\net10.0-windows\"
+    if ($isWindowsHost) {
+        Write-Host "ConPTY host output: src\TerminalWindowManager.ConPTYHost\bin\$Configuration\net10.0-windows\"
+    }
     Write-Host "Core test output: tests\TerminalWindowManager.Core.Tests\bin\$Configuration\net10.0\"
 }
 
 if ($Target -eq "All" -or $Target -eq "Tauri") {
-    Write-Host "Tauri helper output: src\TerminalWindowManager.ConPTYHost\bin\Debug\net10.0-windows\"
+    if ($isWindowsHost) {
+        Write-Host "Tauri helper output: src\TerminalWindowManager.ConPTYHost\bin\Debug\net10.0-windows\"
+    }
     Write-Host "Tauri web assets: src\TerminalWindowManager.Tauri\dist\"
     Write-Host "Tauri native build cache: src\TerminalWindowManager.Tauri\src-tauri\target\"
 }

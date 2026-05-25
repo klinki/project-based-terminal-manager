@@ -6,7 +6,7 @@ This repository now keeps a single active desktop shell:
 
 Supporting projects:
 
-- `src/TerminalWindowManager.ConPTYHost`: helper process that reads ConPTY output and emits structured terminal events.
+- `src/TerminalWindowManager.ConPTYHost`: Windows helper process that reads ConPTY output and emits structured terminal events.
 - `src/TerminalWindowManager.Core`: shared parser and progress-domain types used by the helper.
 - `tests/TerminalWindowManager.Core.Tests`: parser tests.
 
@@ -14,12 +14,10 @@ Use the root [build.ps1](build.ps1) script for repeatable builds.
 
 ## Prerequisites
 
-The active desktop path is Windows-only because it depends on ConPTY and the Windows Tauri target.
-
-- Windows 10 or Windows 11
+- Windows 10 or Windows 11, or macOS with the Tauri prerequisites installed
 - .NET 10 SDK
 - Bun 1.x
-- PowerShell
+- PowerShell for the root `build.ps1` script
 - Rust toolchain with `cargo`
 
 Verify the required toolchains with:
@@ -40,9 +38,9 @@ From the repository root:
 
 The default target builds:
 
-- the active `.NET` projects in `Release`
+- the active `.NET` projects in `Release` (`TerminalWindowManager.ConPTYHost` is Windows-only)
 - the Tauri web assets
-- the Debug ConPTY helper required during development
+- the Debug ConPTY helper required during Windows development
 - a native `cargo check`
 
 ### Useful Targets
@@ -59,7 +57,7 @@ Build only the Tauri shell:
 .\build.ps1 -Target Tauri
 ```
 
-Create the packaged Tauri Windows release build:
+Create the packaged Tauri desktop release build for the current platform:
 
 ```powershell
 .\build.ps1 -Target Desktop-Tauri
@@ -81,8 +79,8 @@ Build the `.NET` projects in `Debug` instead of `Release`:
 
 ## Output Locations
 
-- ConPTY host: `src/TerminalWindowManager.ConPTYHost/bin/<Configuration>/net10.0-windows/`
-- Tauri helper used during development: `src/TerminalWindowManager.ConPTYHost/bin/Debug/net10.0-windows/`
+- ConPTY host on Windows: `src/TerminalWindowManager.ConPTYHost/bin/<Configuration>/net10.0-windows/`
+- Tauri helper used during Windows development: `src/TerminalWindowManager.ConPTYHost/bin/Debug/net10.0-windows/`
 - Tauri web bundle: `src/TerminalWindowManager.Tauri/dist/`
 - Tauri packaged desktop release: `src/TerminalWindowManager.Tauri/src-tauri/target/release/bundle/`
 - Core test output: `tests/TerminalWindowManager.Core.Tests/bin/<Configuration>/net10.0/`
@@ -111,11 +109,13 @@ bun run dev:hmr
 
 ## Troubleshooting
 
-If the Tauri shell reports that the ConPTY helper executable is missing, rebuild that shell target:
+On Windows, if the Tauri shell reports that the ConPTY helper executable is missing, rebuild that shell target:
 
 ```powershell
 .\build.ps1 -Target Tauri
 ```
+
+On macOS the Tauri binary uses a built-in Unix pseudoterminal host instead of the ConPTY helper.
 
 If Bun dependencies get out of sync, rerun:
 

@@ -362,7 +362,10 @@ fn default_shell() -> String {
     }
 }
 
-fn normalize_custom_shells(shells: Vec<String>, current_default_shell: Option<&str>) -> Vec<String> {
+fn normalize_custom_shells(
+    shells: Vec<String>,
+    current_default_shell: Option<&str>,
+) -> Vec<String> {
     let mut normalized = Vec::new();
     let mut seen = std::collections::HashSet::new();
 
@@ -394,7 +397,19 @@ fn push_custom_shell(
 }
 
 fn is_builtin_shell(shell: &str) -> bool {
-    matches!(shell.trim().to_ascii_lowercase().as_str(), "pwsh" | "pwsh.exe" | "cmd" | "cmd.exe")
+    matches!(
+        shell.trim().to_ascii_lowercase().as_str(),
+        "pwsh"
+            | "pwsh.exe"
+            | "cmd"
+            | "cmd.exe"
+            | "/bin/zsh"
+            | "/bin/bash"
+            | "/bin/sh"
+            | "zsh"
+            | "bash"
+            | "sh"
+    )
 }
 
 fn new_uuid_string() -> String {

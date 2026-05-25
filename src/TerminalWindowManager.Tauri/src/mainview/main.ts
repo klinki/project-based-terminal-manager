@@ -157,7 +157,9 @@ type SidebarDragState =
 	| { kind: "terminal"; id: string; projectId: string }
 	| null;
 
-const BUILT_IN_SHELL_OPTIONS = ["pwsh.exe", "cmd.exe"] as const;
+const BUILT_IN_SHELL_OPTIONS = navigator.platform.toLowerCase().includes("win")
+	? ["pwsh.exe", "cmd.exe"]
+	: ["/bin/zsh", "/bin/bash", "/bin/sh"];
 const TITLEBAR_DRAG_THRESHOLD_PX = 4;
 
 let state: AppState = {
@@ -550,7 +552,7 @@ app.innerHTML = `
 
 			<section id="terminal-stage" class="terminal-stage">
 				<div id="terminal-empty" class="terminal-stage-empty">
-					Choose a console on the left to start a live ConPTY-backed session.
+					Choose a console on the left to start a live pseudoterminal session.
 				</div>
 				<div id="terminal-stack" class="terminal-stack"></div>
 			</section>
@@ -618,7 +620,7 @@ app.innerHTML = `
 							role="listbox"
 							aria-label="Default shell options"></div>
 					</div>
-					<span class="settings-hint">Choose pwsh.exe, cmd.exe, or type another executable or full path. Saved custom shells appear here and can be removed.</span>
+					<span class="settings-hint">Choose a built-in shell or type another executable or full path. Saved custom shells appear here and can be removed.</span>
 				</label>
 				<div class="settings-build-info" aria-label="Build information">
 					<div class="settings-build-info-header">Build info</div>
@@ -1328,7 +1330,7 @@ async function bootstrap(): Promise<void> {
 	renderInspector();
 	renderStatusBoard();
 	setStatus(
-		"Create a project, open a console, and click a console to start a live ConPTY-backed session.",
+		"Create a project, open a console, and click a console to start a live pseudoterminal session.",
 	);
 }
 
@@ -2034,7 +2036,13 @@ function isBuiltInShell(shell: string): boolean {
 	return normalized === "pwsh" ||
 		normalized === "pwsh.exe" ||
 		normalized === "cmd" ||
-		normalized === "cmd.exe";
+		normalized === "cmd.exe" ||
+		normalized === "/bin/zsh" ||
+		normalized === "/bin/bash" ||
+		normalized === "/bin/sh" ||
+		normalized === "zsh" ||
+		normalized === "bash" ||
+		normalized === "sh";
 }
 
 async function runUiAction(actionName: string, action: () => Promise<void>): Promise<void> {
@@ -2564,7 +2572,7 @@ function renderInspector(): void {
 
 	selectionTitle.textContent = "Select a console";
 	selectionSubtitle.textContent =
-		"Each console leaf becomes a live ConPTY session once activated.";
+		"Each console leaf becomes a live pseudoterminal session once activated.";
 	selectionMetadata.innerHTML = "";
 	restartTerminalButton.disabled = true;
 	setProjectDefaultCwdButton.disabled = true;
@@ -3150,6 +3158,4 @@ function isTitlebarInteractiveTarget(target: HTMLElement): boolean {
 			target.closest("a"),
 	);
 }
-
-
 

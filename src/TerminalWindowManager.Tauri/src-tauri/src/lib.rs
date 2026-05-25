@@ -3,6 +3,8 @@ mod crash_dialog;
 mod crash_reporting;
 mod diagnostics;
 mod models;
+#[cfg(unix)]
+pub mod pty_host;
 #[cfg(windows)]
 mod windows_keyboard_guard;
 

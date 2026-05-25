@@ -2,11 +2,11 @@
 	"name": "terminal-window-manager-tauri",
 	"version": "0.5.0",
 	"type": "module",
-	"description": "Tauri + xterm.js + ConPTY desktop shell for project-based terminal switching.",
+	"description": "Tauri + xterm.js desktop shell for project-based terminal switching.",
 	"scripts": {
 		"build:sync-version": "node scripts/sync-tauri-version.mjs",
 		"build:build-info": "node scripts/sync-tauri-version.mjs && node scripts/generate-build-info.mjs",
-		"build:host": "dotnet build ../TerminalWindowManager.ConPTYHost/TerminalWindowManager.ConPTYHost.csproj -v minimal -nologo",
+		"build:host": "node scripts/build-host-if-windows.mjs",
 		"build:view": "bun run build:build-info && vite build",
 		"hmr": "bun run build:build-info && vite --port 5173",
 		"start": "bun run dev",

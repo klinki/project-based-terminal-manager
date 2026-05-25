@@ -26,7 +26,7 @@ fn main() {
     };
 
     emit_rerun_if_changed(&helper_dir);
-    if configuration == "Release" {
+    if cfg!(windows) && configuration == "Release" {
         let dotnet_cli_home = manifest_dir.join("target").join(".dotnet-cli-home");
         stage_conpty_host(
             &helper_project,
@@ -45,13 +45,18 @@ fn emit_rerun_if_changed(dir: &Path) {
 
     for entry in entries {
         let entry = entry.unwrap_or_else(|error| {
-            panic!("Failed to enumerate an entry under {}: {error}", dir.display())
+            panic!(
+                "Failed to enumerate an entry under {}: {error}",
+                dir.display()
+            )
         });
         let path = entry.path();
         if path
             .file_name()
             .and_then(|name| name.to_str())
-            .is_some_and(|name| name.eq_ignore_ascii_case("bin") || name.eq_ignore_ascii_case("obj"))
+            .is_some_and(|name| {
+                name.eq_ignore_ascii_case("bin") || name.eq_ignore_ascii_case("obj")
+            })
         {
             continue;
         }
@@ -148,7 +153,10 @@ fn clean_generated_files(dir: &Path) {
 
     for entry in entries {
         let entry = entry.unwrap_or_else(|error| {
-            panic!("Failed to enumerate an entry under {}: {error}", dir.display())
+            panic!(
+                "Failed to enumerate an entry under {}: {error}",
+                dir.display()
+            )
         });
         let path = entry.path();
         let should_keep = path
@@ -165,8 +173,9 @@ fn clean_generated_files(dir: &Path) {
                 panic!("Failed to remove directory {}: {error}", path.display())
             });
         } else {
-            fs::remove_file(&path)
-                .unwrap_or_else(|error| panic!("Failed to remove file {}: {error}", path.display()));
+            fs::remove_file(&path).unwrap_or_else(|error| {
+                panic!("Failed to remove file {}: {error}", path.display())
+            });
         }
     }
 }

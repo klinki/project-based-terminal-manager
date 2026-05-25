@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tauri::{path::BaseDirectory, AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::diagnostics::{
     append_app_log_entry, append_output_chunk, create_power_shell_bootstrap_script,
@@ -743,6 +743,7 @@ impl SessionManager {
     }
 
     fn spawn_session(&self, context: TerminalLaunchContext) -> Result<(), String> {
+        #[cfg(windows)]
         if !self.helper_path.exists() {
             return Err(format!(
                 "ConPTY host executable was not found. Checked: {}",
@@ -755,6 +756,8 @@ impl SessionManager {
         }
 
         let mut command = Command::new(&self.helper_path);
+        #[cfg(unix)]
+        command.arg("--twm-pty-host");
         command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -796,15 +799,15 @@ impl SessionManager {
         let stdin = child
             .stdin
             .take()
-            .ok_or_else(|| "The ConPTY helper did not expose stdin.".to_string())?;
+            .ok_or_else(|| "The terminal host did not expose stdin.".to_string())?;
         let stdout = child
             .stdout
             .take()
-            .ok_or_else(|| "The ConPTY helper did not expose stdout.".to_string())?;
+            .ok_or_else(|| "The terminal host did not expose stdout.".to_string())?;
         let stderr = child
             .stderr
             .take()
-            .ok_or_else(|| "The ConPTY helper did not expose stderr.".to_string())?;
+            .ok_or_else(|| "The terminal host did not expose stderr.".to_string())?;
 
         let live_session = Arc::new(Mutex::new(LiveSession {
             session_id: context.session_id.clone(),
@@ -863,7 +866,7 @@ impl SessionManager {
                         let _ = manager_for_stdout.handle_child_process_error(
                             &terminal_for_stdout,
                             &live_session_for_stdout,
-                            format!("The ConPTY helper emitted unreadable output: {}", error),
+                            format!("The terminal host emitted unreadable output: {}", error),
                         );
                         break;
                     }
@@ -971,7 +974,7 @@ impl SessionManager {
                     let _ = self.handle_child_process_error(
                         &terminal,
                         &live_session,
-                        format!("The ConPTY helper process failed: {}", error),
+                        format!("The terminal host process failed: {}", error),
                     );
                     return;
                 }
@@ -1045,7 +1048,7 @@ impl SessionManager {
     ) -> Result<(), String> {
         let payload = serde_json::from_str::<HelperEvent>(line).map_err(|error| {
             format!(
-                "The ConPTY helper emitted invalid JSON: {} ({})",
+                "The terminal host emitted invalid JSON: {} ({})",
                 line, error
             )
         })?;
@@ -1410,7 +1413,7 @@ impl SessionManager {
                 HelperErrorEvent {
                     session_id: Some(session_id),
                     message:
-                        "The ConPTY helper exited before the shell reported a successful startup."
+                        "The terminal host exited before the shell reported a successful startup."
                             .to_string(),
                     diagnostic_log_path: terminal.diagnostic_log_path.clone(),
                     exception_type: Some("HelperStartupExit".to_string()),
@@ -2021,6 +2024,16 @@ impl SessionManager {
             }
         };
 
+        #[cfg(unix)]
+        {
+            if let Ok(current_exe) = std::env::current_exe() {
+                push_candidate(current_exe);
+            } else if let Some(arg0) = std::env::args_os().next() {
+                push_candidate(PathBuf::from(arg0));
+            }
+        }
+
+        #[cfg(windows)]
         if let Ok(current_dir) = std::env::current_dir() {
             for search_root in current_dir.ancestors() {
                 push_candidate(
@@ -2086,6 +2099,7 @@ impl SessionManager {
             }
         }
 
+        #[cfg(windows)]
         if let Ok(resource_candidate) = app_handle.path().resolve(
             "TerminalWindowManager.ConPTYHost/TerminalWindowManager.ConPTYHost.exe",
             BaseDirectory::Resource,
@@ -2101,6 +2115,7 @@ impl SessionManager {
             );
         }
 
+        #[cfg(windows)]
         if let Ok(executable_dir) = app_handle.path().executable_dir() {
             push_candidate(
                 executable_dir
