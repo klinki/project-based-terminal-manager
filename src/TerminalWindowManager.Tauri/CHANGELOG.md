@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/klinki/project-based-terminal-manager/compare/v0.4.0...v0.5.0) (2026-05-25)
+
+
+### Features
+
+* Confirm before closing application ([770e2b0](https://github.com/klinki/project-based-terminal-manager/commit/770e2b02734d42c18b762b78919d2c21a28435bd))
+
 ## [0.4.0](https://github.com/klinki/project-based-terminal-manager/compare/v0.3.0...v0.4.0) (2026-05-21)
 
 
