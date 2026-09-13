@@ -4,6 +4,7 @@ use std::io::{self, BufRead, BufReader, Read, Write};
 use std::os::fd::{AsRawFd, FromRawFd, RawFd};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -140,16 +141,30 @@ fn run_inner() -> Result<i32, String> {
         started_at: now_iso_string(),
     }))?;
 
-    let _output_thread = {
+    let output_thread = {
         let session_id = options.session_id.clone();
         thread::spawn(move || pump_output(reader, session_id))
     };
     let control_writer = writer.clone();
     let control_pid = shell_pid;
-    let _control_thread =
-        thread::spawn(move || process_control_messages(control_writer, control_pid));
+    let control_context = ControlContext {
+        session_id: options.session_id.clone(),
+        shell_path: shell_path_text.clone(),
+        diagnostic_log_path: diagnostics_log_path_text.clone(),
+    };
+    let _control_thread = thread::spawn(move || {
+        process_control_messages(control_writer, control_pid, control_context)
+    });
 
     let exit_code = wait_for_child(shell_pid)?;
+
+    // Bounded drain: bytes already sitting in the pty buffer (or in flight
+    // through the parser) must still reach the frontend before the `exit`
+    // event — parity with Windows, which flushes pending output first. The
+    // pump normally ends on its own once the slave side closes (read returns
+    // EIO); the bound only guards against a wedged reader, e.g. an orphaned
+    // grandchild holding the slave open and writing forever.
+    join_output_thread(output_thread);
 
     emit_event(&HostEvent::Exit(ExitEvent {
         session_id: &options.session_id,
@@ -271,6 +286,19 @@ fn spawn_pty(options: &HostOptions) -> Result<(RawFd, libc::pid_t), String> {
         ws_ypixel: 0,
     };
 
+    // Exec-error pipe: lets the parent distinguish "shell failed to start"
+    // from "shell exited 127". The write end is close-on-exec, so a
+    // successful exec seals the pipe (parent reads EOF); only an execv
+    // failure leaves it open long enough for the child to report errno.
+    let mut exec_pipe = [-1; 2];
+    if unsafe { libc::pipe(exec_pipe.as_mut_ptr()) } != 0 {
+        return Err(io::Error::last_os_error().to_string());
+    }
+    unsafe {
+        libc::fcntl(exec_pipe[1], libc::F_SETFD, libc::FD_CLOEXEC);
+    }
+    EXEC_ERROR_WRITE_FD.store(exec_pipe[1], Ordering::SeqCst);
+
     let pid = unsafe {
         libc::forkpty(
             &mut master_fd,
@@ -281,14 +309,101 @@ fn spawn_pty(options: &HostOptions) -> Result<(RawFd, libc::pid_t), String> {
     };
 
     if pid < 0 {
+        EXEC_ERROR_WRITE_FD.store(-1, Ordering::SeqCst);
+        unsafe {
+            libc::close(exec_pipe[0]);
+            libc::close(exec_pipe[1]);
+        }
         return Err(io::Error::last_os_error().to_string());
     }
 
     if pid == 0 {
+        // Child: the read end is the parent's; close it so a clean exec
+        // produces EOF rather than hanging the parent's report read.
+        unsafe {
+            libc::close(exec_pipe[0]);
+        }
         exec_shell(options);
     }
 
+    // Parent: the write end belongs to the child now.
+    unsafe {
+        libc::close(exec_pipe[1]);
+    }
+    EXEC_ERROR_WRITE_FD.store(-1, Ordering::SeqCst);
+    report_exec_error_if_any(exec_pipe[0], options);
+    unsafe {
+        libc::close(exec_pipe[0]);
+    }
+
     Ok((master_fd, pid))
+}
+
+/// Write end of the exec-error pipe, stashed for the forked child (see
+/// `spawn_pty`). Written exactly once on execv failure, then `_exit(127)`.
+static EXEC_ERROR_WRITE_FD: AtomicI32 = AtomicI32::new(-1);
+
+/// Reports an execv failure detected via the exec-error pipe (see
+/// `spawn_pty`). Emits an `error` event carrying the errno description so the
+/// backend can tell "shell failed to start" apart from a shell that ran and
+/// exited 127; the child still exits 127 to preserve the existing contract.
+/// A clean exec seals the pipe and reads EOF — no event, no delay.
+fn report_exec_error_if_any(read_fd: RawFd, options: &HostOptions) {
+    let mut errno_bytes = [0u8; 4];
+    let mut received = 0;
+    while received < errno_bytes.len() {
+        let result = unsafe {
+            libc::read(
+                read_fd,
+                errno_bytes[received..].as_mut_ptr() as *mut libc::c_void,
+                (errno_bytes.len() - received) as libc::size_t,
+            )
+        };
+        if result <= 0 {
+            break;
+        }
+        received += result as usize;
+    }
+
+    if received == 0 {
+        return;
+    }
+
+    let shell_path_text = options.shell_path.display().to_string();
+    let diagnostics_log_path_text = options.diagnostics_log_path.display().to_string();
+    let message = match decode_exec_errno(&errno_bytes[..received]) {
+        Some(errno_value) => format!(
+            "Shell '{}' failed to start: {}.",
+            shell_path_text,
+            io::Error::from_raw_os_error(errno_value)
+        ),
+        None => format!(
+            "Shell '{}' failed to start before exec completed.",
+            shell_path_text
+        ),
+    };
+    let _ = emit_event(&HostEvent::Error(ErrorEvent {
+        session_id: Some(options.session_id.as_str()),
+        message,
+        diagnostic_log_path: Some(diagnostics_log_path_text.as_str()),
+        exception_type: Some("UnixPtySpawnError"),
+        hresult: None,
+        win32_error_code: None,
+        occurred_at: now_iso_string(),
+        shell_path: Some(shell_path_text.as_str()),
+        shell_pid: None,
+    }));
+}
+
+/// Decodes the errno word written by the forked child on execv failure.
+/// Returns None for a partial write (child died mid-report).
+fn decode_exec_errno(bytes: &[u8]) -> Option<i32> {
+    if bytes.len() != 4 {
+        return None;
+    }
+    let mut word = [0u8; 4];
+    word.copy_from_slice(bytes);
+    Some(i32::from_ne_bytes(word))
 }
 
 fn exec_shell(options: &HostOptions) -> ! {
@@ -342,6 +457,24 @@ fn exec_shell(options: &HostOptions) -> ! {
 
     unsafe {
         libc::execv(c_shell.as_ptr(), argv.as_mut_ptr());
+        // execv only returns on failure. Report errno through the exec-error
+        // pipe (see spawn_pty) so the parent can emit a descriptive `error`
+        // event; the 127 exit code is preserved for the existing contract.
+        // A single small write: atomic on pipes, no interleaving risk with
+        // the output thread, which only reads the pty at this point.
+        let errno_value = io::Error::last_os_error()
+            .raw_os_error()
+            .unwrap_or(libc::ENOENT);
+        let write_fd = EXEC_ERROR_WRITE_FD.load(Ordering::SeqCst);
+        if write_fd >= 0 {
+            let bytes = errno_value.to_ne_bytes();
+            let _ = libc::write(
+                write_fd,
+                bytes.as_ptr() as *const libc::c_void,
+                bytes.len() as libc::size_t,
+            );
+            libc::close(write_fd);
+        }
         libc::_exit(127);
     }
 }
@@ -467,6 +600,25 @@ fn flush_pending_visible(parser: &mut OscProgressParser) {
         let data_base64 =
             base64::engine::general_purpose::STANDARD.encode(&pending);
         let _ = emit_event(&HostEvent::Output(OutputEvent { data_base64 }));
+    }
+}
+
+/// Maximum time `run_inner` waits for the output pump to finish after the
+/// shell exits before emitting the `exit` event anyway.
+const OUTPUT_DRAIN_TIMEOUT: Duration = Duration::from_millis(500);
+const OUTPUT_DRAIN_POLL_MS: u64 = 25;
+
+/// Waits (bounded) for the output pump to drain post-exit tail output.
+/// Abandons the thread on timeout rather than delaying the `exit` event;
+/// process exit reclaims it. Tail output may be incomplete in that case.
+fn join_output_thread(handle: thread::JoinHandle<()>) {
+    let attempts = OUTPUT_DRAIN_TIMEOUT.as_millis() / u128::from(OUTPUT_DRAIN_POLL_MS) + 1;
+    for _ in 0..attempts {
+        if handle.is_finished() {
+            let _ = handle.join();
+            return;
+        }
+        thread::sleep(Duration::from_millis(OUTPUT_DRAIN_POLL_MS));
     }
 }
 
@@ -696,12 +848,26 @@ fn parse_ascii_int(digits: &[u8]) -> Option<u32> {
     Some(value)
 }
 
-fn process_control_messages(writer: Arc<Mutex<File>>, shell_pid: libc::pid_t) {
+fn process_control_messages(
+    writer: Arc<Mutex<File>>,
+    shell_pid: libc::pid_t,
+    context: ControlContext,
+) {
     let stdin = io::stdin();
     let reader = BufReader::new(stdin.lock());
 
     for line in reader.lines().map_while(Result::ok) {
         let Ok(message) = serde_json::from_str::<ControlMessage>(&line) else {
+            // A corrupt control line must never kill the session, but it
+            // must not vanish silently either: the backend surfaces `error`
+            // events in the terminal pane for diagnosis.
+            context.control_error(
+                format!(
+                    "Ignoring malformed control message: {}.",
+                    truncate_control_excerpt(&line)
+                ),
+                "UnixPtyControlError",
+            );
             continue;
         };
 
@@ -714,21 +880,89 @@ fn process_control_messages(writer: Arc<Mutex<File>>, shell_pid: libc::pid_t) {
                     }
                 }
             }
-            "resize" => {
-                if let (Some(cols), Some(rows)) = (message.cols, message.rows) {
+            "resize" => match validate_resize(message.cols, message.rows) {
+                Ok((cols, rows)) => {
                     if let Ok(writer) = writer.lock() {
-                        resize_pty(&writer, cols.max(20), rows.max(5));
+                        if let Err(error) = resize_pty(&writer, cols, rows) {
+                            context.control_error(
+                                format!(
+                                    "Resize to {}x{} failed: {}.",
+                                    cols,
+                                    rows,
+                                    error.to_string()
+                                ),
+                                "UnixPtyResizeError",
+                            );
+                        }
                     }
                 }
-            }
+                Err(error) => context.control_error(error, "UnixPtyResizeError"),
+            },
             "shutdown" => {
                 terminate_child(shell_pid);
                 return;
             }
+            // Unknown message types are ignored for forward compatibility: an
+            // older helper must keep working when a newer backend sends types
+            // it does not understand yet.
             _ => {}
         }
     }
 }
+
+/// Session context for control-plane diagnostics. Owned (not borrowed) so it
+/// can move into the control thread, which requires `'static`.
+#[derive(Debug, Clone)]
+struct ControlContext {
+    session_id: String,
+    shell_path: String,
+    diagnostic_log_path: String,
+}
+
+impl ControlContext {
+    fn control_error(&self, message: String, exception_type: &'static str) {
+        let _ = emit_event(&HostEvent::Error(ErrorEvent {
+            session_id: Some(self.session_id.as_str()),
+            message,
+            diagnostic_log_path: Some(self.diagnostic_log_path.as_str()),
+            exception_type: Some(exception_type),
+            hresult: None,
+            win32_error_code: None,
+            occurred_at: now_iso_string(),
+            shell_path: Some(self.shell_path.as_str()),
+            shell_pid: None,
+        }));
+    }
+}
+
+/// Truncates a raw control line for error reporting so a corrupt (possibly
+/// huge) line cannot blow up the diagnostics log.
+fn truncate_control_excerpt(line: &str) -> String {
+    const MAX_EXCERPT_CHARS: usize = 128;
+    if line.chars().count() <= MAX_EXCERPT_CHARS {
+        return line.to_string();
+    }
+    let truncated: String = line.chars().take(MAX_EXCERPT_CHARS).collect();
+    format!("{}… ({} bytes total)", truncated, line.len())
+}
+
+/// Validates a runtime resize against the same bounds as startup dimensions
+/// (cols 20-500, rows 5-200). A partial resize is rejected rather than
+/// applied: applying half a dimension would desync the terminal grid.
+fn validate_resize(cols: Option<u16>, rows: Option<u16>) -> Result<(u16, u16), String> {
+    let (Some(cols), Some(rows)) = (cols, rows) else {
+        return Err("Resize requires both cols and rows.".to_string());
+    };
+    Ok((
+        cols.clamp(RESIZE_MIN_COLS, RESIZE_MAX_COLS),
+        rows.clamp(RESIZE_MIN_ROWS, RESIZE_MAX_ROWS),
+    ))
+}
+
+const RESIZE_MIN_COLS: u16 = 20;
+const RESIZE_MAX_COLS: u16 = 500;
+const RESIZE_MIN_ROWS: u16 = 5;
+const RESIZE_MAX_ROWS: u16 = 200;
 
 fn wait_for_child(pid: libc::pid_t) -> Result<i32, String> {
     loop {
@@ -759,16 +993,18 @@ fn wait_for_child(pid: libc::pid_t) -> Result<i32, String> {
     }
 }
 
-fn resize_pty(writer: &File, cols: u16, rows: u16) {
+fn resize_pty(writer: &File, cols: u16, rows: u16) -> io::Result<()> {
     let winsize = libc::winsize {
         ws_row: rows,
         ws_col: cols,
         ws_xpixel: 0,
         ws_ypixel: 0,
     };
-    unsafe {
-        libc::ioctl(writer.as_raw_fd(), libc::TIOCSWINSZ, &winsize);
+    let result = unsafe { libc::ioctl(writer.as_raw_fd(), libc::TIOCSWINSZ, &winsize) };
+    if result < 0 {
+        return Err(io::Error::last_os_error());
     }
+    Ok(())
 }
 
 fn terminate_child(pid: libc::pid_t) {
@@ -1213,5 +1449,56 @@ mod tests {
         note_reaped_exit_code(0);
         assert_eq!(take_reaped_exit_code(), Some(143));
         assert_eq!(take_reaped_exit_code(), None);
+    }
+
+    #[test]
+    fn pty_validate_resize_requires_both_dimensions() {
+        // A partial resize is rejected rather than applied half-way.
+        assert!(validate_resize(None, Some(24)).is_err());
+        assert!(validate_resize(Some(80), None).is_err());
+        assert!(validate_resize(None, None).is_err());
+    }
+
+    #[test]
+    fn pty_validate_resize_clamps_to_startup_bounds() {
+        // Same bounds as HostOptions::parse (cols 20-500, rows 5-200).
+        assert_eq!(validate_resize(Some(80), Some(24)), Ok((80, 24)));
+        assert_eq!(validate_resize(Some(5), Some(1)), Ok((20, 5)));
+        assert_eq!(validate_resize(Some(5000), Some(2000)), Ok((500, 200)));
+    }
+
+    #[test]
+    fn pty_resize_pty_reports_ioctl_failure() {
+        // /dev/null is not a terminal: TIOCSWINSZ must fail loudly instead
+        // of silently succeeding.
+        let null = File::open("/dev/null").expect("open /dev/null");
+        assert!(resize_pty(&null, 80, 24).is_err());
+    }
+
+    #[test]
+    fn pty_truncate_control_excerpt_caps_huge_lines() {
+        assert_eq!(truncate_control_excerpt("short"), "short");
+        let long_line = "x".repeat(500);
+        let excerpt = truncate_control_excerpt(&long_line);
+        assert!(excerpt.len() < long_line.len());
+        assert!(excerpt.contains("500 bytes total"));
+        // Multibyte chars count as chars, not bytes: no mid-char panic.
+        let wide = "é".repeat(200);
+        assert!(truncate_control_excerpt(&wide).contains("total"));
+    }
+
+    #[test]
+    fn pty_decode_exec_errno_round_trips() {
+        assert_eq!(decode_exec_errno(&13i32.to_ne_bytes()), Some(13));
+        assert_eq!(decode_exec_errno(&[]), None);
+        assert_eq!(decode_exec_errno(&[1, 2, 3]), None);
+        assert_eq!(decode_exec_errno(&[1, 2, 3, 4, 5]), None);
+    }
+
+    #[test]
+    fn pty_join_output_thread_returns_promptly_when_done() {
+        let started = std::time::Instant::now();
+        join_output_thread(thread::spawn(|| {}));
+        assert!(started.elapsed() < Duration::from_secs(5));
     }
 }
