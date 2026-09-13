@@ -1236,6 +1236,8 @@ impl SessionManager {
 
         let snapshot = self.snapshot_state();
         self.sync_taskbar_progress(&snapshot);
+        #[cfg(target_os = "macos")]
+        self.sync_dock_progress(&snapshot);
 
         self.emit_event(
             "terminal-progress",
@@ -1968,6 +1970,8 @@ impl SessionManager {
         let snapshot = self.snapshot_state();
         self.state_store.save(&snapshot)?;
         self.sync_taskbar_progress(&snapshot);
+        #[cfg(target_os = "macos")]
+        self.sync_dock_progress(&snapshot);
         self.emit_state_changed_snapshot(snapshot);
         Ok(())
     }
@@ -2048,6 +2052,51 @@ impl SessionManager {
 
         if let Err(error) = window.set_progress_bar(progress_state) {
             eprintln!("Failed to sync taskbar progress: {}", error);
+            return;
+        }
+
+        if let Ok(mut last_state) = self.taskbar_progress_state.lock() {
+            *last_state = Some(next_state);
+        }
+    }
+
+    /// Mirrors the aggregated terminal progress to the macOS Dock tile.
+    ///
+    /// This intentionally uses `set_progress_bar` rather than the Dock badge
+    /// APIs: tao implements `set_progress_bar` on macOS as a Dock-tile progress
+    /// indicator with the same states as the Windows taskbar (Normal and
+    /// Indeterminate render blue, Paused renders yellow, Error renders red,
+    /// None hides the bar), so the mapping below is 1:1 with
+    /// `sync_taskbar_progress`. The badge APIs (`set_badge_count` stringifies
+    /// the number into `NSDockTile`'s badge label, `set_badge_label` sets an
+    /// arbitrary string) can only show a text chip — they cannot represent fill
+    /// fraction or indeterminate state — so they mirror the taskbar worse.
+    /// Aggregation is shared via `aggregate_taskbar_progress`; only the window
+    /// call is macOS-specific. Failures are logged and ignored, never panic.
+    #[cfg(target_os = "macos")]
+    fn sync_dock_progress(&self, snapshot: &AppState) {
+        let next_state = aggregate_taskbar_progress(&snapshot.terminals);
+
+        {
+            let last_state = match self.taskbar_progress_state.lock() {
+                Ok(last_state) => last_state,
+                Err(error) => {
+                    eprintln!("Failed to lock taskbar progress cache: {}", error);
+                    return;
+                }
+            };
+            if last_state.as_ref() == Some(&next_state) {
+                return;
+            }
+        }
+
+        let Some(window) = self.app_handle.get_webview_window("main") else {
+            eprintln!("Failed to sync dock progress: main window was not found.");
+            return;
+        };
+
+        if let Err(error) = window.set_progress_bar(dock_progress_bar_state(&next_state)) {
+            eprintln!("Failed to sync dock progress: {}", error);
             return;
         }
 
@@ -2715,6 +2764,28 @@ fn taskbar_progress_priority(status: TaskbarProgressStatus) -> u8 {
     }
 }
 
+/// Builds the macOS Dock progress-bar payload for an aggregated snapshot.
+///
+/// The mapping is deliberately identical to the Windows `sync_taskbar_progress`
+/// payload so both platforms surface the same state; it is factored out so the
+/// macOS sync path and unit tests share one decision point instead of
+/// duplicating the match.
+#[cfg(any(test, target_os = "macos"))]
+fn dock_progress_bar_state(snapshot: &TaskbarProgressSnapshot) -> tauri::window::ProgressBarState {
+    use tauri::window::{ProgressBarState, ProgressBarStatus};
+
+    ProgressBarState {
+        status: Some(match snapshot.status {
+            TaskbarProgressStatus::None => ProgressBarStatus::None,
+            TaskbarProgressStatus::Normal => ProgressBarStatus::Normal,
+            TaskbarProgressStatus::Indeterminate => ProgressBarStatus::Indeterminate,
+            TaskbarProgressStatus::Paused => ProgressBarStatus::Paused,
+            TaskbarProgressStatus::Error => ProgressBarStatus::Error,
+        }),
+        progress: snapshot.progress.map(u64::from),
+    }
+}
+
 fn new_uuid_string() -> String {
     uuid::Uuid::new_v4().to_string()
 }
@@ -2945,11 +3016,12 @@ fn next_launch_cwd_attempt(
 #[cfg(test)]
 mod tests {
     use super::{
-        aggregate_taskbar_progress, extract_missing_working_directory, next_launch_cwd_attempt,
-        taskbar_progress_from_terminal, unique_terminal_name, LaunchCwdStrategy,
-        TaskbarProgressSnapshot, TaskbarProgressStatus,
+        aggregate_taskbar_progress, dock_progress_bar_state, extract_missing_working_directory,
+        next_launch_cwd_attempt, taskbar_progress_from_terminal, unique_terminal_name,
+        LaunchCwdStrategy, TaskbarProgressSnapshot, TaskbarProgressStatus,
     };
     use crate::models::{TerminalProgressInfo, TerminalProgressState, TerminalRecord};
+    use tauri::window::ProgressBarStatus;
 
     #[test]
     fn parse_missing_working_directory_error_message() {
@@ -3151,6 +3223,69 @@ mod tests {
         });
 
         assert_eq!(mapped, Some((TaskbarProgressStatus::Paused, Some(33))));
+    }
+
+    #[test]
+    fn dock_progress_is_hidden_when_no_terminal_reports_progress() {
+        let snapshot = aggregate_taskbar_progress(&[
+            terminal_with_progress(TerminalProgressState::None, 0),
+            terminal_with_progress(TerminalProgressState::None, 0),
+        ]);
+        let payload = dock_progress_bar_state(&snapshot);
+
+        assert!(matches!(payload.status, Some(ProgressBarStatus::None)));
+        assert_eq!(payload.progress, None);
+    }
+
+    #[test]
+    fn dock_progress_mirrors_normal_percent() {
+        let snapshot = aggregate_taskbar_progress(&[terminal_with_progress(
+            TerminalProgressState::Normal,
+            42,
+        )]);
+        let payload = dock_progress_bar_state(&snapshot);
+
+        assert!(matches!(payload.status, Some(ProgressBarStatus::Normal)));
+        assert_eq!(payload.progress, Some(42));
+    }
+
+    #[test]
+    fn dock_progress_preserves_warning_as_paused() {
+        let snapshot = aggregate_taskbar_progress(&[
+            terminal_with_progress(TerminalProgressState::Normal, 65),
+            terminal_with_progress(TerminalProgressState::Warning, 40),
+        ]);
+        let payload = dock_progress_bar_state(&snapshot);
+
+        assert!(matches!(payload.status, Some(ProgressBarStatus::Paused)));
+        assert_eq!(payload.progress, Some(40));
+    }
+
+    #[test]
+    fn dock_progress_preserves_error_state() {
+        let snapshot = aggregate_taskbar_progress(&[
+            terminal_with_progress(TerminalProgressState::Warning, 90),
+            terminal_with_progress(TerminalProgressState::Error, 12),
+        ]);
+        let payload = dock_progress_bar_state(&snapshot);
+
+        assert!(matches!(payload.status, Some(ProgressBarStatus::Error)));
+        assert_eq!(payload.progress, Some(12));
+    }
+
+    #[test]
+    fn dock_progress_indeterminate_carries_no_percent() {
+        let snapshot = aggregate_taskbar_progress(&[
+            terminal_with_progress(TerminalProgressState::Normal, 80),
+            terminal_with_progress(TerminalProgressState::Indeterminate, 0),
+        ]);
+        let payload = dock_progress_bar_state(&snapshot);
+
+        assert!(matches!(
+            payload.status,
+            Some(ProgressBarStatus::Indeterminate)
+        ));
+        assert_eq!(payload.progress, None);
     }
 
     fn terminal_with_progress(state: TerminalProgressState, value: u32) -> TerminalRecord {
