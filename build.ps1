@@ -18,6 +18,9 @@ $conPtyHostProject = [System.IO.Path]::Combine($repoRoot, "src", "TerminalWindow
 $isWindowsHost = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform(
     [System.Runtime.InteropServices.OSPlatform]::Windows
 )
+$isMacOSHost = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform(
+    [System.Runtime.InteropServices.OSPlatform]::OSX
+)
 $dotNetProjects = @(
     [System.IO.Path]::Combine($repoRoot, "src", "TerminalWindowManager.Core", "TerminalWindowManager.Core.csproj")
     [System.IO.Path]::Combine($repoRoot, "tests", "TerminalWindowManager.Core.Tests", "TerminalWindowManager.Core.Tests.csproj")
@@ -135,7 +138,9 @@ function Build-TauriShell {
 function Build-TauriDesktop {
     Assert-CommandAvailable -CommandName "cargo" -InstallHint "Install the Rust toolchain and make sure 'cargo' is on PATH for Tauri builds."
     Ensure-FrontendDependencies -ProjectDirectory $tauriDir -ProjectLabel "Tauri"
-    Invoke-ExternalCommand -FilePath "bun" -ArgumentList @("run", "build:desktop") -WorkingDirectory $tauriDir
+
+    $desktopBuildScript = if ($isMacOSHost) { "build:desktop:app" } else { "build:desktop" }
+    Invoke-ExternalCommand -FilePath "bun" -ArgumentList @("run", $desktopBuildScript) -WorkingDirectory $tauriDir
 }
 
 switch ($Target) {
@@ -169,17 +174,22 @@ if ($Target -eq "All" -or $Target -eq "DotNet") {
     if ($isWindowsHost) {
         Write-Host "ConPTY host output: src\TerminalWindowManager.ConPTYHost\bin\$Configuration\net10.0-windows\"
     }
-    Write-Host "Core test output: tests\TerminalWindowManager.Core.Tests\bin\$Configuration\net10.0\"
+    Write-Host ("Core test output: " + [System.IO.Path]::Combine("tests", "TerminalWindowManager.Core.Tests", "bin", $Configuration, "net10.0"))
 }
 
 if ($Target -eq "All" -or $Target -eq "Tauri") {
     if ($isWindowsHost) {
         Write-Host "Tauri helper output: src\TerminalWindowManager.ConPTYHost\bin\Debug\net10.0-windows\"
     }
-    Write-Host "Tauri web assets: src\TerminalWindowManager.Tauri\dist\"
-    Write-Host "Tauri native build cache: src\TerminalWindowManager.Tauri\src-tauri\target\"
+    Write-Host ("Tauri web assets: " + [System.IO.Path]::Combine("src", "TerminalWindowManager.Tauri", "dist"))
+    Write-Host ("Tauri native build cache: " + [System.IO.Path]::Combine("src", "TerminalWindowManager.Tauri", "src-tauri", "target"))
 }
 
 if ($Target -eq "Desktop" -or $Target -eq "Desktop-Tauri") {
-    Write-Host "Tauri desktop package: src\TerminalWindowManager.Tauri\src-tauri\target\release\bundle\"
+    if ($isMacOSHost) {
+        Write-Host "Tauri macOS app: src/TerminalWindowManager.Tauri/src-tauri/target/release/bundle/macos/Terminal Window Manager Tauri.app"
+    }
+    else {
+        Write-Host "Tauri desktop package: src\TerminalWindowManager.Tauri\src-tauri\target\release\bundle\"
+    }
 }

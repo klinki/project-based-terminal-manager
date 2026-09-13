@@ -13,7 +13,8 @@
 		"dev": "bun run build:host && bun run tauri dev",
 		"dev:hmr": "bun run build:host && bun run tauri dev",
 		"tauri": "tauri",
-		"build:desktop": "bun run build:host && bun run tauri build"
+		"build:desktop": "bun run build:host && bun run tauri build",
+		"build:desktop:app": "bun run build:host && bun run tauri build --bundles app"
 	},
 	"dependencies": {
 		"@tauri-apps/api": "^2.11.0",
