@@ -15,8 +15,11 @@ use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::diagnostics::{
-    append_app_log_entry, append_output_chunk, create_power_shell_bootstrap_script,
-    create_recent_output_excerpt, create_session_diagnostics_paths, SessionDiagnosticsPaths,
+    append_app_log_entry, append_output_chunk, classify_posix_shell,
+    create_posix_bash_sh_hook_script, create_posix_zsh_hook_script,
+    create_power_shell_bootstrap_script, create_recent_output_excerpt,
+    create_session_diagnostics_paths, create_zshenv_shim, create_zshrc_shim, PosixShellKind,
+    SessionDiagnosticsPaths,
 };
 use crate::models::{
     AppState, ProjectRecord, TerminalActivity, TerminalActivityPhase, TerminalCommandFailure,
@@ -727,6 +730,19 @@ impl SessionManager {
         } else {
             None
         };
+        // POSIX hook (unix only): best-effort cwd/failure tracking for zsh/bash/sh.
+        // Windows behavior is unchanged: on Windows these stay None and no extra
+        // helper args are passed. Hook write failures silently disable the feature
+        // so session startup never breaks.
+        #[cfg(unix)]
+        let (posix_shell_hook_path, posix_zsh_dotdir_path) = self.create_posix_shell_hook(
+            &terminal,
+            &session_id,
+            &diagnostics_paths,
+        );
+        #[cfg(windows)]
+        let (posix_shell_hook_path, posix_zsh_dotdir_path): (Option<PathBuf>, Option<PathBuf>) =
+            (None, None);
 
         terminal.diagnostic_log_path = Some(diagnostics_paths.events_path.display().to_string());
 
@@ -734,6 +750,8 @@ impl SessionManager {
             session_id,
             diagnostics_paths,
             power_shell_bootstrap_path,
+            posix_shell_hook_path,
+            posix_zsh_dotdir_path,
             terminal,
             launch_cwd,
             launch_cwd_strategy,
@@ -786,6 +804,22 @@ impl SessionManager {
                 "--powershell-bootstrap",
                 &power_shell_bootstrap_path.display().to_string(),
             ]);
+        }
+
+        #[cfg(unix)]
+        {
+            if let Some(posix_shell_hook_path) = &context.posix_shell_hook_path {
+                command.args([
+                    "--posix-shell-hook",
+                    &posix_shell_hook_path.display().to_string(),
+                ]);
+            }
+            if let Some(posix_zsh_dotdir_path) = &context.posix_zsh_dotdir_path {
+                command.args([
+                    "--posix-zdotdir",
+                    &posix_zsh_dotdir_path.display().to_string(),
+                ]);
+            }
         }
 
         #[cfg(windows)]
@@ -2313,6 +2347,60 @@ impl SessionManager {
             || normalized.ends_with("powershell.exe")
     }
 
+    #[cfg(unix)]
+    fn create_posix_shell_hook(
+        &self,
+        terminal: &TerminalRecord,
+        session_id: &str,
+        diagnostics_paths: &SessionDiagnosticsPaths,
+    ) -> (Option<PathBuf>, Option<PathBuf>) {
+        let Some(kind) = classify_posix_shell(&terminal.shell) else {
+            return (None, None);
+        };
+
+        match kind {
+            PosixShellKind::Bash | PosixShellKind::Sh => {
+                let script = create_posix_bash_sh_hook_script(
+                    &terminal.id,
+                    session_id,
+                    &diagnostics_paths.events_path,
+                );
+                // Best-effort: a failed write silently disables the hook.
+                if fs::write(&diagnostics_paths.posix_shell_hook_path, script).is_err() {
+                    return (None, None);
+                }
+                (
+                    Some(diagnostics_paths.posix_shell_hook_path.clone()),
+                    None,
+                )
+            }
+            PosixShellKind::Zsh => {
+                let script = create_posix_zsh_hook_script(
+                    &terminal.id,
+                    session_id,
+                    &diagnostics_paths.events_path,
+                );
+                if fs::write(&diagnostics_paths.posix_shell_hook_path, script).is_err() {
+                    return (None, None);
+                }
+                // ZDOTDIR shim: sources the user's own rc files first, then the hook.
+                // Any failure here silently disables the hook.
+                let dotdir = &diagnostics_paths.posix_zsh_dotdir_path;
+                if fs::create_dir_all(dotdir).is_err()
+                    || fs::write(dotdir.join(".zshrc"), create_zshrc_shim()).is_err()
+                    || fs::write(dotdir.join(".zshenv"), create_zshenv_shim()).is_err()
+                {
+                    let _ = fs::remove_file(&diagnostics_paths.posix_shell_hook_path);
+                    return (None, None);
+                }
+                (
+                    Some(diagnostics_paths.posix_shell_hook_path.clone()),
+                    Some(dotdir.clone()),
+                )
+            }
+        }
+    }
+
     fn try_retry_with_fallback_cwd(
         &self,
         terminal: &TerminalRecord,
@@ -2444,6 +2532,8 @@ struct TerminalLaunchContext {
     session_id: String,
     diagnostics_paths: SessionDiagnosticsPaths,
     power_shell_bootstrap_path: Option<PathBuf>,
+    posix_shell_hook_path: Option<PathBuf>,
+    posix_zsh_dotdir_path: Option<PathBuf>,
     terminal: TerminalRecord,
     launch_cwd: Option<String>,
     launch_cwd_strategy: LaunchCwdStrategy,

@@ -22,6 +22,8 @@ struct HostOptions {
     session_id: String,
     diagnostics_log_path: PathBuf,
     power_shell_bootstrap_path: Option<PathBuf>,
+    posix_shell_hook_path: Option<PathBuf>,
+    posix_zdotdir_path: Option<PathBuf>,
     cols: u16,
     rows: u16,
 }
@@ -227,12 +229,33 @@ impl HostOptions {
             }
         }
 
+        // POSIX hook args are best-effort: a missing file silently disables the
+        // feature so session startup never breaks (unlike the PowerShell path
+        // above, which intentionally fails fast on Windows).
+        let posix_shell_hook_path = values
+            .get("posix-shell-hook")
+            .filter(|path| !path.trim().is_empty())
+            .map(PathBuf::from)
+            .filter(|path| path.is_file());
+        let posix_zdotdir_path = values
+            .get("posix-zdotdir")
+            .filter(|path| !path.trim().is_empty())
+            .map(PathBuf::from)
+            .filter(|path| path.is_dir());
+        // A zdotdir without its hook file is useless; require both.
+        let (posix_shell_hook_path, posix_zdotdir_path) = match (posix_shell_hook_path, posix_zdotdir_path) {
+            (hook, Some(dotdir)) if hook.is_some() => (hook, Some(dotdir)),
+            (hook, _) => (hook, None),
+        };
+
         Ok(Self {
             working_directory,
             shell_path,
             session_id,
             diagnostics_log_path,
             power_shell_bootstrap_path,
+            posix_shell_hook_path,
+            posix_zdotdir_path,
             cols: parse_dimension(values.get("cols"), 120, 20, 500)?,
             rows: parse_dimension(values.get("rows"), 30, 5, 200)?,
         })
@@ -280,6 +303,8 @@ fn exec_shell(options: &HostOptions) -> ! {
         libc::setenv(term_name.as_ptr(), term_value.as_ptr(), 1);
     }
 
+    install_posix_hook_env(options);
+
     let shell_path = options.shell_path.display().to_string();
     let mut args = vec![shell_path.clone()];
     if let Some(bootstrap_path) = &options.power_shell_bootstrap_path {
@@ -305,6 +330,84 @@ fn exec_shell(options: &HostOptions) -> ! {
     unsafe {
         libc::execv(c_shell.as_ptr(), argv.as_mut_ptr());
         libc::_exit(127);
+    }
+}
+
+/// Installs POSIX hook environment for the forked child only (called between
+/// `forkpty` and `execv`, so the helper parent is unaffected).
+///
+/// - zsh: `ZDOTDIR` points at the generated shim dir (whose `.zshrc` sources
+///   the user's original rc, then the hook). The original `ZDOTDIR` (or
+///   `$HOME` fallback) is preserved via `__TWM_ORIG_ZDOTDIR` for the shim.
+/// - bash/sh: `PROMPT_COMMAND` chains a `source "$__TWM_POSIX_HOOK"` snippet
+///   that captures `$?` first (preserving it for chained entries), and `ENV`
+///   points at the hook with the user's original `ENV` preserved via
+///   `__TWM_ORIG_ENV` (sourced once by the hook).
+///
+/// Everything is best-effort: any failure silently leaves the feature off so
+/// session startup never breaks. Paths with spaces are safe because they
+/// travel in dedicated env vars (`__TWM_POSIX_HOOK`, `__TWM_EVENTS_PATH`)
+/// rather than being interpolated into shell code.
+fn install_posix_hook_env(options: &HostOptions) {
+    let Some(hook_path) = &options.posix_shell_hook_path else {
+        return;
+    };
+    let hook_text = hook_path.display().to_string();
+    // The hook needs the events file; the helper already knows it via
+    // --events-path, so export it (handles spaces without quoting).
+    let events_text = options.diagnostics_log_path.display().to_string();
+    set_child_env("__TWM_POSIX_HOOK", &hook_text);
+    set_child_env("__TWM_EVENTS_PATH", &events_text);
+
+    if let Some(dotdir) = &options.posix_zdotdir_path {
+        let dotdir_text = dotdir.display().to_string();
+        // Preserve the original ZDOTDIR for the shim; fall back to $HOME when
+        // ZDOTDIR was unset (the shim itself falls back to $HOME at runtime).
+        let original = std::env::var_os("ZDOTDIR")
+            .and_then(|value| value.into_string().ok())
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| {
+                std::env::var_os("HOME")
+                    .and_then(|value| value.into_string().ok())
+                    .filter(|value| !value.trim().is_empty())
+            });
+        if let Some(original) = original {
+            if original != dotdir_text {
+                set_child_env("__TWM_ORIG_ZDOTDIR", &original);
+            }
+        }
+        set_child_env("ZDOTDIR", &dotdir_text);
+        return;
+    }
+
+    // bash/sh path: preserve the user's ENV file for the hook to source once.
+    if let Ok(original_env) = std::env::var("ENV") {
+        if !original_env.trim().is_empty() && original_env != hook_text {
+            set_child_env("__TWM_ORIG_ENV", &original_env);
+        }
+    }
+    set_child_env("ENV", &hook_text);
+
+    // bash imports PROMPT_COMMAND from the environment for interactive shells.
+    // Chain the parent value (usually empty for GUI-launched helpers) after our
+    // snippet. Our snippet captures $? first and returns it, so chained entries
+    // and `echo $?` keep seeing the previous command's exit.
+    // Note: a user's ~/.bashrc that assigns PROMPT_COMMAND outright will replace
+    // this (documented best-effort limitation); append-style rc files preserve it.
+    let snippet = "__twm_ec=$?; source \"$__TWM_POSIX_HOOK\" >/dev/null 2>&1 || true; __twm_on_prompt \"$__twm_ec\" >/dev/null 2>&1 || true";
+    let chained = match std::env::var("PROMPT_COMMAND") {
+        Ok(previous) if !previous.trim().is_empty() => format!("{}; {}", snippet, previous),
+        _ => snippet.to_string(),
+    };
+    set_child_env("PROMPT_COMMAND", &chained);
+}
+
+fn set_child_env(name: &str, value: &str) {
+    let (Ok(c_name), Ok(c_value)) = (CString::new(name), CString::new(value)) else {
+        return;
+    };
+    unsafe {
+        libc::setenv(c_name.as_ptr(), c_value.as_ptr(), 1);
     }
 }
 
