@@ -41,6 +41,8 @@ struct ControlMessage {
 enum HostEvent<'a> {
     Started(StartedEvent<'a>),
     Output(OutputEvent),
+    #[serde(rename = "terminalProgress")]
+    TerminalProgress(ProgressEvent),
     Exit(ExitEvent<'a>),
     Error(ErrorEvent<'a>),
 }
@@ -60,6 +62,15 @@ struct StartedEvent<'a> {
 #[serde(rename_all = "camelCase")]
 struct OutputEvent {
     data_base64: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProgressEvent {
+    session_id: String,
+    state: u32,
+    progress: u32,
+    occurred_at: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -127,7 +138,10 @@ fn run_inner() -> Result<i32, String> {
         started_at: now_iso_string(),
     }))?;
 
-    let _output_thread = thread::spawn(move || pump_output(reader));
+    let _output_thread = {
+        let session_id = options.session_id.clone();
+        thread::spawn(move || pump_output(reader, session_id))
+    };
     let control_writer = writer.clone();
     let control_pid = shell_pid;
     let _control_thread =
@@ -294,20 +308,276 @@ fn exec_shell(options: &HostOptions) -> ! {
     }
 }
 
-fn pump_output(mut reader: File) {
+fn pump_output(mut reader: File, session_id: String) {
     let mut buffer = [0u8; 4096];
+    let mut parser = OscProgressParser::new();
     loop {
         match reader.read(&mut buffer) {
-            Ok(0) => return,
+            Ok(0) => {
+                flush_pending_visible(&mut parser);
+                return;
+            }
             Ok(bytes_read) => {
-                let data_base64 =
-                    base64::engine::general_purpose::STANDARD.encode(&buffer[..bytes_read]);
-                let _ = emit_event(&HostEvent::Output(OutputEvent { data_base64 }));
+                let parsed = parser.parse_chunk(&buffer[..bytes_read]);
+                for (state, progress) in parsed.progress_events {
+                    let _ = emit_event(&HostEvent::TerminalProgress(ProgressEvent {
+                        session_id: session_id.clone(),
+                        state,
+                        progress,
+                        occurred_at: now_iso_string(),
+                    }));
+                }
+                // Parity with Windows ConPTYHost: a chunk containing only
+                // OSC 9;4 sequences still forwards progress events but skips
+                // the empty output event.
+                if !parsed.visible.is_empty() {
+                    let data_base64 = base64::engine::general_purpose::STANDARD
+                        .encode(&parsed.visible);
+                    let _ = emit_event(&HostEvent::Output(OutputEvent { data_base64 }));
+                }
             }
             Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
-            Err(_) => return,
+            Err(_) => {
+                flush_pending_visible(&mut parser);
+                return;
+            }
         }
     }
+}
+
+fn flush_pending_visible(parser: &mut OscProgressParser) {
+    let pending = parser.flush();
+    if !pending.is_empty() {
+        let data_base64 =
+            base64::engine::general_purpose::STANDARD.encode(&pending);
+        let _ = emit_event(&HostEvent::Output(OutputEvent { data_base64 }));
+    }
+}
+
+/// Stateful `ESC ] 9;4;<state>;<progress> (BEL | ESC \)` filter.
+///
+/// Mirrors `TerminalWindowManager.Core/Services/TerminalSequenceParser.cs`:
+/// valid sequences are stripped from visible output and reported as
+/// `(state, progress)` events; anything malformed is forwarded untouched.
+/// The pending reassembly buffer is bounded by `MAX_PENDING_BYTES` so a
+/// split-across-reads prefix retains at most a small tail between reads
+/// and adversarial input cannot grow memory without bound.
+const OSC_PROGRESS_MAX_PENDING_BYTES: usize = 64;
+const OSC_PROGRESS_PREFIX: &[u8] = b"9;4;";
+const ESCAPE_BYTE: u8 = 0x1B;
+const OSC_BYTE: u8 = b']';
+const SEMICOLON_BYTE: u8 = b';';
+const BEL_BYTE: u8 = 0x07;
+const ST_TERMINATOR_BYTE: u8 = b'\\';
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OscParserState {
+    Idle,
+    ExpectOsc,
+    ExpectPrefix,
+    ParseState,
+    ParseProgress,
+    ExpectStringTerminator,
+}
+
+#[derive(Debug, Default)]
+struct OscProgressParser {
+    state: OscParserState,
+    pending: Vec<u8>,
+    prefix_index: usize,
+    state_digits: Vec<u8>,
+    progress_digits: Vec<u8>,
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+struct ParsedChunk {
+    visible: Vec<u8>,
+    progress_events: Vec<(u32, u32)>,
+}
+
+impl Default for OscParserState {
+    fn default() -> Self {
+        OscParserState::Idle
+    }
+}
+
+impl OscProgressParser {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn parse_chunk(&mut self, input: &[u8]) -> ParsedChunk {
+        let mut parsed = ParsedChunk {
+            visible: Vec::with_capacity(input.len()),
+            progress_events: Vec::new(),
+        };
+        for &byte in input {
+            self.process_byte(byte, &mut parsed.visible, &mut parsed.progress_events);
+        }
+        parsed
+    }
+
+    /// Returns bytes held as an incomplete sequence. A complete caller
+    /// forwards them as plain output (parity with `FlushPendingOutput`).
+    fn flush(&mut self) -> Vec<u8> {
+        if self.pending.is_empty() {
+            return Vec::new();
+        }
+        let pending = std::mem::take(&mut self.pending);
+        self.reset();
+        pending
+    }
+
+    fn process_byte(&mut self, value: u8, output: &mut Vec<u8>, events: &mut Vec<(u32, u32)>) {
+        let mut current = Some(value);
+        while let Some(byte) = current {
+            current = None;
+            // Bound the reassembly tail: if a candidate sequence already
+            // holds the maximum, it cannot be a valid short OSC 9;4
+            // sequence, so emit it as plain output and re-examine this
+            // byte from the idle state. Malformed input is never dropped.
+            if self.state != OscParserState::Idle
+                && self.pending.len() >= OSC_PROGRESS_MAX_PENDING_BYTES
+            {
+                self.flush_to_output(output);
+                current = Some(byte);
+                continue;
+            }
+
+            match self.state {
+                OscParserState::Idle => {
+                    if byte == ESCAPE_BYTE {
+                        self.reset();
+                        self.pending.push(byte);
+                        self.state = OscParserState::ExpectOsc;
+                    } else {
+                        output.push(byte);
+                    }
+                }
+                OscParserState::ExpectOsc => {
+                    if byte == OSC_BYTE {
+                        self.pending.push(byte);
+                        self.state = OscParserState::ExpectPrefix;
+                        self.prefix_index = 0;
+                    } else {
+                        self.flush_to_output(output);
+                        current = Some(byte);
+                    }
+                }
+                OscParserState::ExpectPrefix => {
+                    if byte == OSC_PROGRESS_PREFIX[self.prefix_index] {
+                        self.pending.push(byte);
+                        self.prefix_index += 1;
+                        if self.prefix_index == OSC_PROGRESS_PREFIX.len() {
+                            self.state_digits.clear();
+                            self.progress_digits.clear();
+                            self.state = OscParserState::ParseState;
+                        }
+                    } else {
+                        self.flush_to_output(output);
+                        current = Some(byte);
+                    }
+                }
+                OscParserState::ParseState => {
+                    if is_ascii_digit(byte) {
+                        self.pending.push(byte);
+                        self.state_digits.push(byte);
+                    } else if byte == SEMICOLON_BYTE && !self.state_digits.is_empty() {
+                        self.pending.push(byte);
+                        self.state = OscParserState::ParseProgress;
+                    } else {
+                        self.flush_to_output(output);
+                        current = Some(byte);
+                    }
+                }
+                OscParserState::ParseProgress => {
+                    if is_ascii_digit(byte) {
+                        self.pending.push(byte);
+                        self.progress_digits.push(byte);
+                    } else if byte == BEL_BYTE && !self.progress_digits.is_empty() {
+                        self.pending.push(byte);
+                        self.complete_sequence(output, events);
+                    } else if byte == ESCAPE_BYTE && !self.progress_digits.is_empty() {
+                        self.pending.push(byte);
+                        self.state = OscParserState::ExpectStringTerminator;
+                    } else {
+                        self.flush_to_output(output);
+                        current = Some(byte);
+                    }
+                }
+                OscParserState::ExpectStringTerminator => {
+                    if byte == ST_TERMINATOR_BYTE {
+                        self.pending.push(byte);
+                        self.complete_sequence(output, events);
+                    } else {
+                        self.flush_to_output(output);
+                        current = Some(byte);
+                    }
+                }
+            }
+        }
+    }
+
+    fn complete_sequence(&mut self, output: &mut Vec<u8>, events: &mut Vec<(u32, u32)>) {
+        match try_create_progress(&self.state_digits, &self.progress_digits) {
+            Some((state, progress)) => {
+                events.push((state, progress));
+                self.reset();
+            }
+            None => self.flush_to_output(output),
+        }
+    }
+
+    fn flush_to_output(&mut self, output: &mut Vec<u8>) {
+        if !self.pending.is_empty() {
+            output.extend_from_slice(&self.pending);
+        }
+        self.reset();
+    }
+
+    fn reset(&mut self) {
+        self.state = OscParserState::Idle;
+        self.prefix_index = 0;
+        self.pending.clear();
+        self.state_digits.clear();
+        self.progress_digits.clear();
+    }
+}
+
+fn is_ascii_digit(value: u8) -> bool {
+    value.is_ascii_digit()
+}
+
+/// Validates `state` in 0-4 and `progress` in 0-100, normalizing the
+/// `None`/`Indeterminate` progress value to 0 like the C# parser and the
+/// backend `map_terminal_progress`.
+fn try_create_progress(state_digits: &[u8], progress_digits: &[u8]) -> Option<(u32, u32)> {
+    let state = parse_ascii_int(state_digits)?;
+    let raw_progress = parse_ascii_int(progress_digits)?;
+    if state > 4 || raw_progress > 100 {
+        return None;
+    }
+    let progress = match state {
+        0 | 3 => 0,
+        _ => raw_progress,
+    };
+    Some((state, progress))
+}
+
+fn parse_ascii_int(digits: &[u8]) -> Option<u32> {
+    if digits.is_empty() {
+        return None;
+    }
+    let mut value: u32 = 0;
+    for &digit in digits {
+        if !digit.is_ascii_digit() {
+            return None;
+        }
+        value = value
+            .checked_mul(10)?
+            .checked_add(u32::from(digit - b'0'))?;
+    }
+    Some(value)
 }
 
 fn process_control_messages(writer: Arc<Mutex<File>>, shell_pid: libc::pid_t) {
@@ -467,4 +737,160 @@ fn emit_event(event: &HostEvent<'_>) -> Result<(), String> {
 
 fn now_iso_string() -> String {
     Utc::now().to_rfc3339()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn bel_sequence(state: &str, progress: &str) -> Vec<u8> {
+        let mut bytes = vec![ESCAPE_BYTE, OSC_BYTE];
+        bytes.extend_from_slice(b"9;4;");
+        bytes.extend_from_slice(state.as_bytes());
+        bytes.push(SEMICOLON_BYTE);
+        bytes.extend_from_slice(progress.as_bytes());
+        bytes.push(BEL_BYTE);
+        bytes
+    }
+
+    fn st_sequence(state: &str, progress: &str) -> Vec<u8> {
+        let mut bytes = vec![ESCAPE_BYTE, OSC_BYTE];
+        bytes.extend_from_slice(b"9;4;");
+        bytes.extend_from_slice(state.as_bytes());
+        bytes.push(SEMICOLON_BYTE);
+        bytes.extend_from_slice(progress.as_bytes());
+        bytes.push(ESCAPE_BYTE);
+        bytes.push(ST_TERMINATOR_BYTE);
+        bytes
+    }
+
+    #[test]
+    fn pty_bel_sequence_yields_progress_and_strips_output() {
+        let mut parser = OscProgressParser::new();
+        let mut input = b"hello".to_vec();
+        input.extend_from_slice(&bel_sequence("1", "50"));
+        input.extend_from_slice(b"world");
+
+        let parsed = parser.parse_chunk(&input);
+
+        assert_eq!(parsed.visible, b"helloworld");
+        assert_eq!(parsed.progress_events, vec![(1, 50)]);
+        assert!(parser.flush().is_empty());
+    }
+
+    #[test]
+    fn pty_split_sequence_across_chunks_reassembles() {
+        let mut parser = OscProgressParser::new();
+        let full = bel_sequence("2", "75");
+        let split_at = 5;
+        let first = parser.parse_chunk(&full[..split_at]);
+        // A partial prefix must not leak into visible output yet.
+        assert!(first.visible.is_empty());
+        assert!(first.progress_events.is_empty());
+
+        let mut visible = first.visible;
+        let mut events = first.progress_events;
+        let second = parser.parse_chunk(&full[split_at..]);
+        visible.extend_from_slice(&second.visible);
+        events.extend(second.progress_events);
+
+        assert!(visible.is_empty());
+        assert_eq!(events, vec![(2, 75)]);
+        assert!(parser.flush().is_empty());
+    }
+
+    #[test]
+    fn pty_split_sequence_with_surrounding_text_reassembles() {
+        let mut parser = OscProgressParser::new();
+        let mut first_input = b"hello".to_vec();
+        let full = bel_sequence("1", "50");
+        first_input.extend_from_slice(&full[..4]);
+        let first = parser.parse_chunk(&first_input);
+        assert_eq!(first.visible, b"hello");
+
+        let mut second_input = full[4..].to_vec();
+        second_input.extend_from_slice(b"world");
+        let second = parser.parse_chunk(&second_input);
+        assert_eq!(second.visible, b"world");
+        assert_eq!(second.progress_events, vec![(1, 50)]);
+    }
+
+    #[test]
+    fn pty_st_terminator_yields_progress_and_strips_output() {
+        let mut parser = OscProgressParser::new();
+        let mut input = b"start-".to_vec();
+        input.extend_from_slice(&st_sequence("4", "90"));
+        input.extend_from_slice(b"-end");
+
+        let parsed = parser.parse_chunk(&input);
+
+        assert_eq!(parsed.visible, b"start--end");
+        assert_eq!(parsed.progress_events, vec![(4, 90)]);
+    }
+
+    #[test]
+    fn pty_indeterminate_progress_normalizes_to_zero() {
+        let mut parser = OscProgressParser::new();
+        let parsed = parser.parse_chunk(&bel_sequence("3", "25"));
+        assert!(parsed.visible.is_empty());
+        assert_eq!(parsed.progress_events, vec![(3, 0)]);
+    }
+
+    #[test]
+    fn pty_malformed_input_passes_through() {
+        let mut parser = OscProgressParser::new();
+        // Invalid state (9) plus out-of-range progress: must not be dropped.
+        let mut invalid = vec![ESCAPE_BYTE, OSC_BYTE];
+        invalid.extend_from_slice(b"9;4;9;999");
+        invalid.push(BEL_BYTE);
+        let parsed = parser.parse_chunk(&invalid);
+        assert_eq!(parsed.visible, invalid);
+        assert!(parsed.progress_events.is_empty());
+
+        // Non-progress escape sequences (e.g. SGR color) pass through.
+        let mut parser = OscProgressParser::new();
+        let color = b"\x1b[31mhi\x1b[0m".to_vec();
+        let parsed = parser.parse_chunk(&color);
+        assert_eq!(parsed.visible, color);
+        assert!(parsed.progress_events.is_empty());
+
+        // Truncated candidate with no terminator stays pending until flush,
+        // then is forwarded as plain output rather than dropped.
+        let mut parser = OscProgressParser::new();
+        let partial = b"\x1b]9;4;1;5".to_vec();
+        let parsed = parser.parse_chunk(&partial);
+        assert!(parsed.visible.is_empty());
+        assert_eq!(parser.flush(), partial);
+    }
+
+    #[test]
+    fn pty_progress_event_json_matches_backend_helper_shape() {
+        let event = HostEvent::TerminalProgress(ProgressEvent {
+            session_id: "session-1".to_string(),
+            state: 1,
+            progress: 50,
+            occurred_at: "2026-01-01T00:00:00Z".to_string(),
+        });
+        let value = serde_json::to_value(&event).expect("event serializes");
+        assert_eq!(value["type"], "terminalProgress");
+        assert_eq!(value["sessionId"], "session-1");
+        assert_eq!(value["state"], 1);
+        assert_eq!(value["progress"], 50);
+        assert_eq!(value["occurredAt"], "2026-01-01T00:00:00Z");
+    }
+
+    #[test]
+    fn pty_pending_tail_stays_bounded() {
+        let mut parser = OscProgressParser::new();
+        // Adversarial input: ESC followed by many bytes that never form a
+        // valid terminator must not accumulate without bound.
+        let mut input = vec![ESCAPE_BYTE, OSC_BYTE];
+        input.extend(vec![b'9'; 4096]);
+        let parsed = parser.parse_chunk(&input);
+        assert!(parsed.progress_events.is_empty());
+        // Everything undecided must fit within the small bounded tail plus
+        // whatever was just flushed to visible output.
+        assert!(parser.pending.len() <= OSC_PROGRESS_MAX_PENDING_BYTES);
+        assert_eq!(parsed.visible.len() + parser.pending.len(), input.len());
+    }
 }
