@@ -292,6 +292,19 @@ fn spawn_pty(options: &HostOptions) -> Result<(RawFd, libc::pid_t), String> {
 }
 
 fn exec_shell(options: &HostOptions) -> ! {
+    // Fresh process group for the shell (pgid == shell pid) so the shutdown
+    // path can signal the whole group (shell plus editors, pagers, and
+    // background jobs) with kill(-pgid, sig). setpgid — not setsid — keeps
+    // the pty slave as the controlling terminal, so terminal-driven job
+    // control (SIGINT/SIGTSTP from the foreground group) keeps working;
+    // setsid would detach the controlling terminal and break that.
+    // Best-effort: forkpty/login_tty may already have made this child a
+    // session leader, in which case setpgid fails with EPERM and we are
+    // already alone in our own group — either way the shutdown path's
+    // pgid == pid invariant holds.
+    unsafe {
+        let _ = libc::setpgid(0, 0);
+    }
     if let Ok(cwd) = CString::new(options.working_directory.as_os_str().as_bytes()) {
         unsafe {
             libc::chdir(cwd.as_ptr());
@@ -726,14 +739,20 @@ fn wait_for_child(pid: libc::pid_t) -> Result<i32, String> {
             if error.kind() == io::ErrorKind::Interrupted {
                 continue;
             }
+            // ECHILD here means the shutdown thread already reaped the shell
+            // through its WNOHANG escalation loop; report the recorded code
+            // so the normal `exit` event (with 128+signal synthesis) is
+            // still emitted instead of an error event.
+            if error.raw_os_error() == Some(libc::ECHILD) {
+                if let Some(exit_code) = take_reaped_exit_code() {
+                    return Ok(exit_code);
+                }
+            }
             return Err(error.to_string());
         }
 
-        if libc::WIFEXITED(status) {
-            return Ok(libc::WEXITSTATUS(status));
-        }
-        if libc::WIFSIGNALED(status) {
-            return Ok(128 + libc::WTERMSIG(status));
+        if let Some(exit_code) = decode_wait_status(status) {
+            return Ok(exit_code);
         }
 
         thread::sleep(Duration::from_millis(25));
@@ -753,11 +772,148 @@ fn resize_pty(writer: &File, cols: u16, rows: u16) {
 }
 
 fn terminate_child(pid: libc::pid_t) {
-    unsafe {
-        libc::kill(pid, libc::SIGHUP);
-        thread::sleep(Duration::from_millis(100));
-        libc::kill(pid, libc::SIGTERM);
+    // Signal the shell's process group (negative pid), not just the shell:
+    // editors, pagers, and background jobs spawned by the shell share the
+    // group and must die too, or they would be orphaned when this helper
+    // exits. SIGHUP first so shells save history; SIGTERM next; SIGKILL
+    // last — SIGKILL cannot be caught or ignored, so anything still alive
+    // after it is unkillable (e.g. D-state sleep) or already reaped.
+    let pgid = shell_process_group(pid);
+    signal_process_group(pgid, libc::SIGHUP);
+    if poll_child_exit(pid, Duration::from_millis(SHUTDOWN_SIGHUP_GRACE_MS)) {
+        return;
     }
+    signal_process_group(pgid, libc::SIGTERM);
+    if poll_child_exit(pid, Duration::from_millis(SHUTDOWN_SIGTERM_GRACE_MS)) {
+        return;
+    }
+    signal_process_group(pgid, libc::SIGKILL);
+    // Bounded settle only: the child is dead (SIGKILL is uncatchable) but
+    // may need a scheduler tick to become a zombie we can reap. If the poll
+    // times out, return anyway — init (pid 1) inherits and reaps the orphan.
+    poll_child_exit(pid, Duration::from_millis(SHUTDOWN_SIGKILL_SETTLE_MS));
+}
+
+/// Graceful-shutdown escalation timeline for the shell process group.
+///
+/// SIGHUP first (lets shells save history and hangs up pty-attached
+/// grandchildren), then SIGTERM, then SIGKILL. The total stays bounded
+/// (~1s) so app quit stays snappy; `stop_terminal` in backend.rs waits
+/// slightly longer than this before SIGKILLing the helper itself.
+const SHUTDOWN_SIGHUP_GRACE_MS: u64 = 200;
+const SHUTDOWN_SIGTERM_GRACE_MS: u64 = 400;
+const SHUTDOWN_SIGKILL_SETTLE_MS: u64 = 400;
+const SHUTDOWN_REAP_POLL_MS: u64 = 25;
+
+/// Exit code captured by whichever thread reaps the shell first, so the main
+/// wait loop can still emit the normal `exit` event when the shutdown path
+/// wins the reap race (it polls with WNOHANG while escalating signals).
+static REAPED_EXIT_CODE: Mutex<Option<i32>> = Mutex::new(None);
+
+fn note_reaped_exit_code(exit_code: i32) {
+    if let Ok(mut slot) = REAPED_EXIT_CODE.lock() {
+        if slot.is_none() {
+            *slot = Some(exit_code);
+        }
+    }
+}
+
+fn take_reaped_exit_code() -> Option<i32> {
+    REAPED_EXIT_CODE
+        .lock()
+        .ok()
+        .and_then(|mut slot| slot.take())
+}
+
+/// Decodes a waitpid status word into the exit code reported to the backend,
+/// synthesizing 128+signal for signaled children (parity with the previous
+/// inline logic). Returns None for statuses that are neither (e.g. stops).
+fn decode_wait_status(status: i32) -> Option<i32> {
+    if libc::WIFEXITED(status) {
+        Some(libc::WEXITSTATUS(status))
+    } else if libc::WIFSIGNALED(status) {
+        Some(128 + libc::WTERMSIG(status))
+    } else {
+        None
+    }
+}
+
+/// Resolves the shell's process group id. Normally pgid == pid (the forkpty
+/// child calls setpgid(0, 0) before exec, or is already a session leader via
+/// forkpty/login_tty). Prefers the kernel's answer in case the shell
+/// re-grouped itself; falls back to pid when getpgid fails (child already
+/// gone) — kill() on a gone pid fails with ESRCH, which the group-signal
+/// helper ignores. The result is always passed through `group_kill_target`,
+/// so values <= 1 are never signalled.
+fn shell_process_group(pid: libc::pid_t) -> libc::pid_t {
+    if pid <= 1 {
+        return pid;
+    }
+    let pgid = unsafe { libc::getpgid(pid) };
+    if pgid > 1 {
+        pgid
+    } else {
+        pid
+    }
+}
+
+/// Returns the pid argument for group signalling (`-pgid`), or None when the
+/// group must never be signalled: kill(-1, sig) would hit every process the
+/// helper can signal, and group 1 is init's group.
+fn group_kill_target(pgid: libc::pid_t) -> Option<libc::pid_t> {
+    if pgid <= 1 {
+        None
+    } else {
+        Some(-pgid)
+    }
+}
+
+fn signal_process_group(pgid: libc::pid_t, signal: libc::c_int) {
+    let Some(target) = group_kill_target(pgid) else {
+        return;
+    };
+    unsafe {
+        libc::kill(target, signal);
+    }
+    // Return value intentionally ignored: ESRCH (already gone) is the normal
+    // outcome on later escalation steps, and EPERM can occur for privileged
+    // children. Shutdown must never panic.
+}
+
+/// Non-blocking reap check: true when `pid` has exited (reaping it and
+/// recording the exit code), or when there is no child to wait for (ECHILD —
+/// the main wait loop already reaped it). EINTR and other errors report
+/// "not reaped" so the caller retries.
+fn child_reaped(pid: libc::pid_t) -> bool {
+    let mut status = 0;
+    let result = unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) };
+    if result == pid {
+        if let Some(exit_code) = decode_wait_status(status) {
+            note_reaped_exit_code(exit_code);
+        }
+        return true;
+    }
+    if result < 0 {
+        let errno = io::Error::last_os_error().raw_os_error().unwrap_or(0);
+        if errno == libc::ECHILD {
+            return true;
+        }
+    }
+    false
+}
+
+/// Bounded WNOHANG polling loop (waitpid has no timeout). Returns true when
+/// the child exited within `timeout`, false on timeout — the caller must
+/// return anyway so shutdown never blocks (init reaps anything left over).
+fn poll_child_exit(pid: libc::pid_t, timeout: Duration) -> bool {
+    let attempts = timeout.as_millis() / u128::from(SHUTDOWN_REAP_POLL_MS) + 1;
+    for _ in 0..attempts {
+        if child_reaped(pid) {
+            return true;
+        }
+        thread::sleep(Duration::from_millis(SHUTDOWN_REAP_POLL_MS));
+    }
+    child_reaped(pid)
 }
 
 fn resolve_shell_path(requested_shell: Option<&str>) -> Result<PathBuf, String> {
@@ -995,5 +1151,67 @@ mod tests {
         // whatever was just flushed to visible output.
         assert!(parser.pending.len() <= OSC_PROGRESS_MAX_PENDING_BYTES);
         assert_eq!(parsed.visible.len() + parser.pending.len(), input.len());
+    }
+
+    #[test]
+    fn pty_shutdown_escalation_stays_bounded() {
+        let total =
+            SHUTDOWN_SIGHUP_GRACE_MS + SHUTDOWN_SIGTERM_GRACE_MS + SHUTDOWN_SIGKILL_SETTLE_MS;
+        // App quit must stay snappy: the helper's whole escalation fits ~1s.
+        assert!(total <= 1000, "shutdown escalation totals {}ms", total);
+        assert!(SHUTDOWN_SIGHUP_GRACE_MS >= 100);
+        assert!(SHUTDOWN_SIGTERM_GRACE_MS >= SHUTDOWN_SIGHUP_GRACE_MS);
+        assert!(SHUTDOWN_REAP_POLL_MS > 0);
+    }
+
+    #[test]
+    fn pty_group_kill_target_never_targets_init_or_everything() {
+        assert_eq!(group_kill_target(0), None);
+        assert_eq!(group_kill_target(1), None);
+        assert_eq!(group_kill_target(-7), None);
+        assert_eq!(group_kill_target(2), Some(-2));
+        assert_eq!(group_kill_target(1234), Some(-1234));
+    }
+
+    #[test]
+    fn pty_decode_wait_status_matches_exit_event_synthesis() {
+        // POSIX wait encoding: exit code in the high byte, signal in the
+        // low 7 bits. Verified through libc's own WIF*/W* macros.
+        assert_eq!(decode_wait_status(0 << 8), Some(0));
+        assert_eq!(decode_wait_status(42 << 8), Some(42));
+        assert_eq!(decode_wait_status(libc::SIGTERM), Some(128 + libc::SIGTERM));
+        assert_eq!(decode_wait_status(libc::SIGHUP), Some(128 + libc::SIGHUP));
+        assert_eq!(decode_wait_status(libc::SIGKILL), Some(128 + libc::SIGKILL));
+    }
+
+    #[test]
+    fn pty_shell_process_group_falls_back_without_spawning() {
+        // Guarded pids pass through (group_kill_target rejects them later).
+        assert_eq!(shell_process_group(0), 0);
+        assert_eq!(shell_process_group(1), 1);
+        // A pid that cannot exist: getpgid fails, so the pid itself is
+        // returned and kill() on it would harmlessly fail with ESRCH.
+        assert_eq!(shell_process_group(i32::MAX), i32::MAX);
+    }
+
+    #[test]
+    fn pty_poll_child_exit_reports_missing_child_as_gone() {
+        // No process spawned: waitpid on an absurd pid fails with ECHILD,
+        // which must count as "gone" without sleeping out the timeout.
+        assert!(poll_child_exit(
+            i32::MAX,
+            Duration::from_millis(SHUTDOWN_REAP_POLL_MS)
+        ));
+    }
+
+    #[test]
+    fn pty_reaped_exit_code_round_trips_once() {
+        // Only this test touches the shared slot, so no cross-test races.
+        assert_eq!(take_reaped_exit_code(), None);
+        note_reaped_exit_code(143);
+        // First write wins; a losing reap race must not overwrite it.
+        note_reaped_exit_code(0);
+        assert_eq!(take_reaped_exit_code(), Some(143));
+        assert_eq!(take_reaped_exit_code(), None);
     }
 }

@@ -596,7 +596,16 @@ impl SessionManager {
             }
             let child_lock = live_session.child.lock();
             if let Ok(mut child) = child_lock {
+                // Unix: let the helper run its shutdown escalation (SIGHUP →
+                // SIGTERM → SIGKILL on the shell's process group, ~1s)
+                // before SIGKILLing the helper itself; killing it first
+                // would orphan the shell. Bounded so app quit stays snappy.
+                #[cfg(unix)]
+                {
+                    Self::wait_for_helper_exit(&mut child, Duration::from_millis(1500));
+                }
                 let _ = child.kill();
+                let _ = child.wait();
             }
         }
 
@@ -2271,6 +2280,22 @@ impl SessionManager {
             .get(terminal_id)
             .cloned()
             .ok_or_else(|| format!("Terminal session '{}' is not running yet. Activate the session before sending input.", terminal_id))
+    }
+
+    /// Unix only: poll a helper child for exit so its own shutdown escalation
+    /// can kill the shell's process group before the caller falls back to
+    /// SIGKILLing the helper. Returns true when the helper exited on its own.
+    #[cfg(unix)]
+    fn wait_for_helper_exit(child: &mut Child, timeout: Duration) -> bool {
+        let attempts = timeout.as_millis() / 25 + 1;
+        for _ in 0..attempts {
+            match child.try_wait() {
+                Ok(Some(_)) => return true,
+                Ok(None) => thread::sleep(Duration::from_millis(25)),
+                Err(_) => return false,
+            }
+        }
+        matches!(child.try_wait(), Ok(Some(_)))
     }
 
     fn cleanup_session(&self, terminal_id: &str) {
