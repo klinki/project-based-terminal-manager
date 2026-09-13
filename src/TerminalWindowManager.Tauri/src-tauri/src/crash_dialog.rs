@@ -15,7 +15,10 @@ pub fn show_once(context: &CrashDialogContext<'_>) {
     #[cfg(windows)]
     windows::show_once(context);
 
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    macos::show_once(context);
+
+    #[cfg(not(any(windows, target_os = "macos")))]
     let _ = context;
 }
 
@@ -222,6 +225,103 @@ mod windows {
             .encode_wide()
             .chain(std::iter::once(0))
             .collect()
+    }
+}
+
+#[cfg(target_os = "macos")]
+mod macos {
+    use super::*;
+    use std::process::{Command, Stdio};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::{Duration, Instant};
+
+    static DIALOG_SHOWN: AtomicBool = AtomicBool::new(false);
+
+    const OSASCRIPT_TIMEOUT: Duration = Duration::from_secs(60);
+
+    pub(super) fn show_once(context: &CrashDialogContext<'_>) {
+        if DIALOG_SHOWN.swap(true, Ordering::SeqCst) {
+            return;
+        }
+
+        let _ = show_dialog_impl(context);
+    }
+
+    fn show_dialog_impl(context: &CrashDialogContext<'_>) -> std::io::Result<()> {
+        let alert_text = escape_applescript(MAIN_INSTRUCTION);
+        let message_text = escape_applescript(&truncate_for_dialog(
+            &format!(
+                "{}\n\n{}",
+                create_dialog_content(context),
+                build_expanded_information(context)
+            ),
+            MAX_EXPANDED_INFORMATION_CHARS,
+        ));
+        let script = format!(
+            "display alert \"{}\" message \"{}\" buttons {{\"Reveal Logs\", \"Close\"}} default button \"Close\"",
+            alert_text, message_text
+        );
+
+        let output = run_osascript(&script)?;
+        if output.contains("Reveal Logs") {
+            reveal_location(context);
+        }
+
+        Ok(())
+    }
+
+    fn run_osascript(script: &str) -> std::io::Result<String> {
+        let mut child = Command::new("/usr/bin/osascript")
+            .arg("-e")
+            .arg(script)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()?;
+
+        let deadline = Instant::now() + OSASCRIPT_TIMEOUT;
+        loop {
+            match child.try_wait()? {
+                Some(_) => {
+                    let output = child.wait_with_output()?;
+                    return Ok(String::from_utf8_lossy(&output.stdout).into_owned());
+                }
+                None => {
+                    if Instant::now() >= deadline {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::TimedOut,
+                            "osascript timed out",
+                        ));
+                    }
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+            }
+        }
+    }
+
+    fn reveal_location(context: &CrashDialogContext<'_>) {
+        let target = context.crash_snapshot_path.unwrap_or(context.app_data_dir);
+        let _ = Command::new("/usr/bin/open")
+            .arg("-R")
+            .arg(target)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn();
+    }
+
+    fn escape_applescript(value: &str) -> String {
+        let mut escaped = String::with_capacity(value.len());
+        for ch in value.chars() {
+            match ch {
+                '\\' => escaped.push_str("\\\\"),
+                '"' => escaped.push_str("\\\""),
+                _ => escaped.push(ch),
+            }
+        }
+        escaped
     }
 }
 
