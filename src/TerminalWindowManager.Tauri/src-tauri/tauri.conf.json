@@ -11,6 +11,7 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "Terminal Window Manager Tauri",
         "width": 1480,
         "height": 920,
@@ -18,12 +19,18 @@
         "minHeight": 680,
         "backgroundColor": "#0E0E0E",
         "decorations": false,
-        "center": true
+        "center": true,
+        "create": false
       }
     ]
   },
   "bundle": {
     "active": true,
+    "category": "DeveloperTool",
+    "shortDescription": "Project-based terminal manager",
+    "macOS": {
+      "minimumSystemVersion": "11.0"
+    },
     "icon": ["icons/icon.icns", "icons/icon.png", "icons/icon.ico", "icons/app-icon.svg"],
     "resources": ["resources/"]
   }

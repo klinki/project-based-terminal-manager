@@ -161,6 +161,12 @@ const BUILT_IN_SHELL_OPTIONS = navigator.platform.toLowerCase().includes("win")
 	? ["pwsh.exe", "cmd.exe"]
 	: ["/bin/zsh", "/bin/bash", "/bin/sh"];
 const TITLEBAR_DRAG_THRESHOLD_PX = 4;
+// On macOS the window uses a native overlay titlebar (see lib.rs setup):
+// traffic lights replace the custom minimize/maximize/close buttons.
+const IS_MACOS = navigator.userAgent.includes("Mac");
+if (IS_MACOS) {
+	document.body.dataset.platform = "macos";
+}
 
 let state: AppState = {
 	defaults: {
@@ -763,6 +769,8 @@ titlebar.addEventListener("dblclick", (event) => {
 
 	titlebarDragState = null;
 	event.preventDefault();
+	// On macOS toggleMaximize maps to the native zoom behavior; the green
+	// traffic light keeps handling fullscreen natively.
 	void getCurrentWindow().toggleMaximize();
 });
 

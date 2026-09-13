@@ -116,6 +116,22 @@ input {
 	color: #fff;
 }
 
+/* macOS uses native traffic lights via an overlay titlebar, so the custom
+   Windows-style controls are hidden and the title clears the traffic lights. */
+body[data-platform="macos"] .titlebar {
+	height: 38px;
+	padding-left: 76px;
+}
+
+body[data-platform="macos"] .titlebar-title {
+	flex: 1;
+	text-align: center;
+}
+
+body[data-platform="macos"] .titlebar-controls {
+	display: none;
+}
+
 .app-shell {
 	display: flex;
 	flex-direction: column;

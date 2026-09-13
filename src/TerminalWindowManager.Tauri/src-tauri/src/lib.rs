@@ -9,7 +9,7 @@ pub mod pty_host;
 mod windows_keyboard_guard;
 
 use backend::SessionManager;
-use tauri::{Manager, State, WebviewWindow};
+use tauri::{Manager, RunEvent, State, WebviewWindow, WebviewWindowBuilder};
 
 #[tauri::command]
 fn get_initial_state(manager: State<'_, SessionManager>) -> Result<models::AppState, String> {
@@ -152,11 +152,26 @@ fn window_minimize(window: WebviewWindow) -> Result<serde_json::Value, String> {
 
 #[tauri::command]
 fn window_maximize(window: WebviewWindow) -> Result<serde_json::Value, String> {
+    // Windows/Linux: toggle the maximized (zoomed) state.
+    // macOS: the custom button is hidden in favor of the native traffic
+    // lights, where the green button handles fullscreen/zoom natively.
+    // toggle_maximize on macOS maps to zoom, so keep the behavior sane
+    // if this command is ever invoked there.
     if window.is_maximized().map_err(|error| error.to_string())? {
         window.unmaximize().map_err(|error| error.to_string())?;
     } else {
         window.maximize().map_err(|error| error.to_string())?;
     }
+
+    Ok(serde_json::json!({ "ok": true }))
+}
+
+#[tauri::command]
+fn window_toggle_fullscreen(window: WebviewWindow) -> Result<serde_json::Value, String> {
+    let fullscreen = window.is_fullscreen().map_err(|error| error.to_string())?;
+    window
+        .set_fullscreen(!fullscreen)
+        .map_err(|error| error.to_string())?;
 
     Ok(serde_json::json!({ "ok": true }))
 }
@@ -224,7 +239,7 @@ pub fn run() {
         }
     };
 
-    let run_result = tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .setup(|app| {
             let app_data_dir = app
                 .path()
@@ -240,6 +255,40 @@ pub fn run() {
 
             let session_manager = SessionManager::new(app.handle().clone(), metadata_path)?;
             app.manage(session_manager);
+
+            // The main window is declared with `create: false` in
+            // tauri.conf.json so each platform can apply its own chrome here.
+            // Windows keeps the frameless custom titlebar; macOS gets native
+            // traffic lights via an overlay titlebar instead.
+            #[allow(unused_mut)]
+            let mut window_config = app
+                .config()
+                .app
+                .windows
+                .first()
+                .cloned()
+                .ok_or_else(|| "Missing main window configuration.".to_string())?;
+            #[cfg(target_os = "macos")]
+            {
+                window_config.decorations = true;
+                window_config.title_bar_style = tauri::TitleBarStyle::Overlay;
+                window_config.hidden_title = true;
+                window_config.traffic_light_position =
+                    Some(tauri::utils::config::LogicalPosition { x: 14.0, y: 16.0 });
+            }
+            WebviewWindowBuilder::from_config(app.handle(), &window_config)
+                .map_err(|error| error.to_string())?
+                .build()
+                .map_err(|error| error.to_string())?;
+
+            // Native App/Edit/Window/View menus on macOS so standard shortcuts
+            // (Cmd+Q/W/M, copy/paste, fullscreen) behave like other Mac apps.
+            #[cfg(target_os = "macos")]
+            {
+                let menu =
+                    tauri::menu::Menu::default(app.handle()).map_err(|error| error.to_string())?;
+                app.set_menu(menu).map_err(|error| error.to_string())?;
+            }
 
             #[cfg(windows)]
             windows_keyboard_guard::install_for_existing_windows(app)?;
@@ -264,45 +313,61 @@ pub fn run() {
             set_project_default_cwd,
             window_minimize,
             window_maximize,
+            window_toggle_fullscreen,
             stop_all_sessions,
             log_renderer_event,
             window_close,
-        ])
-        .run(context);
+        ]);
 
-    if let Err(error) = run_result {
-        let detail = error.to_string();
-        let _ = diagnostics::append_app_log_entry(
-            &fallback_app_data_dir,
-            "fatal",
-            "tauri_run",
-            "The Tauri runtime exited with an error.",
-            None,
-            Some(&detail),
-            None,
-        );
-        crash_reporting::capture_native_event(
-            "fatal",
-            "tauri_run",
-            "The Tauri runtime exited with an error.",
-            Some(&detail),
-        );
-        let crash_snapshot_path = diagnostics::write_crash_snapshot(
-            &fallback_app_data_dir,
-            "fatal",
-            "tauri_run",
-            "The Tauri runtime exited with an error.",
-            Some(serde_json::json!({ "error": detail })),
-            None,
-        )
-        .ok();
-        crash_reporting::flush_pending_events(std::time::Duration::from_secs(2));
-        crash_dialog::show_once(&crash_dialog::CrashDialogContext {
-            message: "The Tauri runtime exited with an error.",
-            detail: Some(&detail),
-            app_data_dir: &fallback_app_data_dir,
-            crash_snapshot_path: crash_snapshot_path.as_deref(),
-        });
-        eprintln!("Terminal Window Manager Tauri failed: {}", detail);
+    match builder.build(context) {
+        Ok(app) => {
+            // Gracefully stop PTY sessions on Cmd+Q / menu Quit, matching the
+            // custom close-button path.
+            app.run(|app_handle, event| {
+                if let RunEvent::ExitRequested { .. } = event {
+                    if let Some(manager) = app_handle.try_state::<SessionManager>() {
+                        let _ = manager.stop_all_sessions();
+                    }
+                }
+            });
+        }
+        Err(error) => {
+            handle_build_failure(&fallback_app_data_dir, &error.to_string());
+        }
     }
+}
+
+fn handle_build_failure(fallback_app_data_dir: &std::path::Path, detail: &str) {
+    let _ = diagnostics::append_app_log_entry(
+        fallback_app_data_dir,
+        "fatal",
+        "tauri_run",
+        "The Tauri runtime exited with an error.",
+        None,
+        Some(detail),
+        None,
+    );
+    crash_reporting::capture_native_event(
+        "fatal",
+        "tauri_run",
+        "The Tauri runtime exited with an error.",
+        Some(detail),
+    );
+    let crash_snapshot_path = diagnostics::write_crash_snapshot(
+        fallback_app_data_dir,
+        "fatal",
+        "tauri_run",
+        "The Tauri runtime exited with an error.",
+        Some(serde_json::json!({ "error": detail })),
+        None,
+    )
+    .ok();
+    crash_reporting::flush_pending_events(std::time::Duration::from_secs(2));
+    crash_dialog::show_once(&crash_dialog::CrashDialogContext {
+        message: "The Tauri runtime exited with an error.",
+        detail: Some(detail),
+        app_data_dir: fallback_app_data_dir,
+        crash_snapshot_path: crash_snapshot_path.as_deref(),
+    });
+    eprintln!("Terminal Window Manager Tauri failed: {}", detail);
 }

@@ -203,6 +203,9 @@ export type TerminalManagerRpc = {
 			}) => Promise<{ ok: boolean }>;
 			windowMinimize: (params: Record<string, never>) => Promise<{ ok: boolean }>;
 			windowMaximize: (params: Record<string, never>) => Promise<{ ok: boolean }>;
+			windowToggleFullscreen: (
+				params: Record<string, never>,
+			) => Promise<{ ok: boolean }>;
 			windowClose: (params: Record<string, never>) => Promise<{ ok: boolean }>;
 			stopAllSessions: (params?: Record<string, never>) => Promise<{ ok: boolean }>;
 		};
