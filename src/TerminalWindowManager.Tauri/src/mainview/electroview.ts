@@ -39,6 +39,8 @@ function createRpcBridge(): TerminalManagerRpc {
 				renameProject: ({ projectId, name }) =>
 					invoke<AppState>("rename_project", { projectId, name }),
 				deleteProject: ({ projectId }) => invoke<AppState>("delete_project", { projectId }),
+				reorderProjects: ({ projectIds }) =>
+					invoke<AppState>("reorder_projects", { projectIds }),
 				createTerminal: ({ projectId, name, cwd, shell }) =>
 					invoke<AppState>("create_terminal", {
 						projectId,
@@ -49,6 +51,8 @@ function createRpcBridge(): TerminalManagerRpc {
 				renameTerminal: ({ terminalId, name }) =>
 					invoke<AppState>("rename_terminal", { terminalId, name }),
 				deleteTerminal: ({ terminalId }) => invoke<AppState>("delete_terminal", { terminalId }),
+				reorderTerminals: ({ projectId, terminalIds }) =>
+					invoke<AppState>("reorder_terminals", { projectId, terminalIds }),
 				activateTerminal: ({ terminalId, cols, rows }) =>
 					invoke<AppState>("activate_terminal", { terminalId, cols, rows }),
 				sendInput: ({ terminalId, data }) =>

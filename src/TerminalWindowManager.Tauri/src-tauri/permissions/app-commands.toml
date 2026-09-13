@@ -6,9 +6,11 @@ commands.allow = [
   "create_project",
   "rename_project",
   "delete_project",
+  "reorder_projects",
   "create_terminal",
   "rename_terminal",
   "delete_terminal",
+  "reorder_terminals",
   "activate_terminal",
   "send_input",
   "resize_terminal",
@@ -20,4 +22,5 @@ commands.allow = [
   "stop_all_sessions",
   "update_defaults",
   "set_project_default_cwd",
+  "log_renderer_event",
 ]
