@@ -292,6 +292,7 @@ body[data-platform="macos"] .titlebar-controls {
 }
 
 .tree-node.dragging,
+.tree-project-row.dragging,
 .tree-children li.dragging {
 	opacity: 0.5;
 }
@@ -309,13 +310,13 @@ body[data-platform="macos"] .titlebar-controls {
 	box-shadow: 0 0 0 1px rgba(94, 160, 255, 0.22);
 }
 
-.tree-terminal-button[draggable="true"],
-.tree-project-button[draggable="true"] {
+.tree-project-row[draggable="true"],
+li[data-terminal-drag-id][draggable="true"] {
 	cursor: grab;
 }
 
-.tree-terminal-button[draggable="true"]:active,
-.tree-project-button[draggable="true"]:active {
+.tree-project-row[draggable="true"]:active,
+li[data-terminal-drag-id][draggable="true"]:active {
 	cursor: grabbing;
 }
 

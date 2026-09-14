@@ -206,6 +206,10 @@ let settingsShellMenuOpen = false;
 let lastRenderedTreeMarkup = "";
 let titlebarDragState: TitlebarDragState | null = null;
 let sidebarDragState: SidebarDragState = null;
+// Set while a sidebar drag is active: replacing the tree DOM mid-drag aborts
+// the native gesture in some engines, so renderTree() defers its work until
+// dragend and the pending render is flushed there instead.
+let sidebarRenderDeferred = false;
 let closeConfirmationInProgress = false;
 
 const terminalViews = new Map<string, TerminalView>();
@@ -1070,6 +1074,18 @@ projectTreeElement.addEventListener("dragstart", (event) => {
 	hideContextMenu();
 });
 
+projectTreeElement.addEventListener("dragenter", (event) => {
+	if (!sidebarDragState) {
+		return;
+	}
+
+	// Cancelling dragenter as well as dragover: some engines decide the
+	// drop-allowed feedback from the first event they see.
+	if (resolveSidebarDropTarget(event)) {
+		event.preventDefault();
+	}
+});
+
 projectTreeElement.addEventListener("dragover", (event) => {
 	if (!sidebarDragState) {
 		return;
@@ -1117,6 +1133,12 @@ projectTreeElement.addEventListener("drop", (event) => {
 projectTreeElement.addEventListener("dragend", () => {
 	sidebarDragState = null;
 	clearSidebarDragStateClasses();
+	if (sidebarRenderDeferred) {
+		sidebarRenderDeferred = false;
+		renderTree();
+		renderInspector();
+		renderStatusBoard();
+	}
 });
 
 projectTreeElement.addEventListener("contextmenu", (event) => {
@@ -1473,7 +1495,7 @@ function resolveSidebarDropTarget(event: DragEvent): SidebarDropTarget | null {
 	if (sidebarDragState?.kind === "project") {
 		const projectNode = target.closest<HTMLElement>("[data-project-node-id]");
 		if (!projectNode) {
-			return null;
+			return resolveProjectListEdgeTarget(event);
 		}
 
 		const projectId = projectNode.dataset.projectNodeId!;
@@ -1495,7 +1517,7 @@ function resolveSidebarDropTarget(event: DragEvent): SidebarDropTarget | null {
 
 	const terminalNode = target.closest<HTMLElement>("[data-terminal-node-id]");
 	if (!terminalNode) {
-		return null;
+		return resolveSameProjectTerminalFallback(target);
 	}
 
 	const terminalId = terminalNode.dataset.terminalNodeId!;
@@ -1513,6 +1535,81 @@ function resolveSidebarDropTarget(event: DragEvent): SidebarDropTarget | null {
 		projectId,
 		placement: getDropPlacement(event, terminalNode),
 		element: terminalNode,
+	};
+}
+
+/// Fallback for project drags landing on list padding (above the first or
+/// below the last project), where no project node is under the cursor:
+/// resolves to moving to the start/end of the list.
+function resolveProjectListEdgeTarget(event: DragEvent): SidebarDropTarget | null {
+	if (sidebarDragState?.kind !== "project") {
+		return null;
+	}
+
+	const nodes = projectTreeElement.querySelectorAll<HTMLElement>(
+		"[data-project-node-id]",
+	);
+	if (nodes.length === 0) {
+		return null;
+	}
+
+	const first = nodes[0]!;
+	const last = nodes[nodes.length - 1]!;
+	if (event.clientY < first.getBoundingClientRect().top) {
+		const firstId = first.dataset.projectNodeId!;
+		if (firstId === sidebarDragState.id) {
+			return null;
+		}
+		return { kind: "project", id: firstId, placement: "before", element: first };
+	}
+
+	const lastId = last.dataset.projectNodeId!;
+	if (lastId === sidebarDragState.id) {
+		return null;
+	}
+	return { kind: "project", id: lastId, placement: "after", element: last };
+}
+
+/// Fallback for terminal drags landing on their own project's non-terminal
+/// areas (header row, list padding): resolves to appending after the last
+/// console. Drops over other projects stay rejected (cross-project moves are
+/// not supported). Returns null when that resolves to a no-op.
+function resolveSameProjectTerminalFallback(
+	target: HTMLElement,
+): SidebarDropTarget | null {
+	if (sidebarDragState?.kind !== "terminal") {
+		return null;
+	}
+
+	const projectNode = target.closest<HTMLElement>("[data-project-node-id]");
+	if (!projectNode) {
+		return null;
+	}
+
+	const projectId = projectNode.dataset.projectNodeId!;
+	if (projectId !== sidebarDragState.projectId) {
+		return null;
+	}
+
+	const items = projectNode.querySelectorAll<HTMLElement>(
+		"[data-terminal-node-id]",
+	);
+	if (items.length === 0) {
+		return null;
+	}
+
+	const last = items[items.length - 1]!;
+	const lastId = last.dataset.terminalNodeId!;
+	if (lastId === sidebarDragState.id) {
+		return null;
+	}
+
+	return {
+		kind: "terminal",
+		id: lastId,
+		projectId,
+		placement: "after",
+		element: last,
 	};
 }
 
@@ -2339,6 +2436,11 @@ async function selectTerminal(terminalId: string): Promise<void> {
 }
 
 function renderTree(): void {
+	if (sidebarDragState) {
+		sidebarRenderDeferred = true;
+		return;
+	}
+
 	projectCount.textContent = String(state.projects.length);
 
 	let nextTreeMarkup: string;
@@ -2386,9 +2488,7 @@ function renderTree(): void {
 						<button
 							type="button"
 							class="tree-project-button ${isProjectSelected ? "active" : ""}"
-							data-project-id="${project.id}"
-							data-project-drag-id="${project.id}"
-							draggable="true">
+							data-project-id="${project.id}">
 							<span
 								class="tree-project-toggle ${isCollapsed ? "collapsed" : ""}"
 								data-project-toggle-id="${project.id}"
@@ -2435,14 +2535,16 @@ function renderTree(): void {
 										}
 
 										return `
-											<li data-terminal-node-id="${terminal.id}" data-terminal-project-id="${terminal.projectId}">
+											<li
+												data-terminal-node-id="${terminal.id}"
+												data-terminal-project-id="${terminal.projectId}"
+												data-terminal-drag-id="${terminal.id}"
+												draggable="true">
 												<button
 													type="button"
 													class="tree-terminal-button ${selection?.kind === "terminal" && selection.id === terminal.id ? "active" : ""}"
 													data-terminal-id="${terminal.id}"
-													data-terminal-drag-id="${terminal.id}"
-													data-terminal-project-id="${terminal.projectId}"
-													draggable="true">
+													data-terminal-project-id="${terminal.projectId}">
 												<div class="tree-terminal-copy">
 													<span class="tree-terminal-title">${escapeHtml(terminal.name)}</span>
 													<span class="tree-terminal-detail">${escapeHtml(terminal.activity.summary)}</span>
@@ -2461,7 +2563,11 @@ function renderTree(): void {
 
 				return `
 					<li class="tree-node" data-project-node-id="${project.id}">
-						<div class="tree-project-row" data-project-row-id="${project.id}">
+						<div
+							class="tree-project-row"
+							data-project-row-id="${project.id}"
+							data-project-drag-id="${project.id}"
+							draggable="true">
 							${projectLabel}
 							<button
 								type="button"
