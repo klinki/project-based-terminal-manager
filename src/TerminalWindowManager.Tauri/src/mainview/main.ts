@@ -152,15 +152,22 @@ type TitlebarDragState = {
 	startY: number;
 };
 
-type SidebarDragState =
-	| { kind: "project"; id: string }
-	| { kind: "terminal"; id: string; projectId: string }
-	| null;
+type SidebarPointerDrag = {
+	kind: "project" | "terminal";
+	id: string;
+	projectId: string;
+	pointerId: number;
+	startX: number;
+	startY: number;
+	active: boolean;
+	currentTarget: SidebarDropTarget | null;
+};
 
 const BUILT_IN_SHELL_OPTIONS = navigator.platform.toLowerCase().includes("win")
 	? ["pwsh.exe", "cmd.exe"]
 	: ["/bin/zsh", "/bin/bash", "/bin/sh"];
 const TITLEBAR_DRAG_THRESHOLD_PX = 4;
+const SIDEBAR_DRAG_THRESHOLD_PX = 5;
 // On macOS the window uses a native overlay titlebar (see lib.rs setup):
 // traffic lights replace the custom minimize/maximize/close buttons.
 const IS_MACOS = navigator.userAgent.includes("Mac");
@@ -205,10 +212,13 @@ let settingsDialogCustomShells: string[] = [];
 let settingsShellMenuOpen = false;
 let lastRenderedTreeMarkup = "";
 let titlebarDragState: TitlebarDragState | null = null;
-let sidebarDragState: SidebarDragState = null;
-// Set while a sidebar drag is active: replacing the tree DOM mid-drag aborts
-// the native gesture in some engines, so renderTree() defers its work until
-// dragend and the pending render is flushed there instead.
+let sidebarPointerDrag: SidebarPointerDrag | null = null;
+// Swallows the click the browser fires after a pointer drag so dropping onto
+// a row does not also select/activate it.
+let suppressSidebarClick = false;
+// Set while a sidebar drag is active: replacing the tree DOM mid-drag would
+// move the hit-test targets under the pointer, so renderTree() defers its
+// work until the drag finishes and the pending render is flushed there.
 let sidebarRenderDeferred = false;
 let closeConfirmationInProgress = false;
 
@@ -912,6 +922,11 @@ newConsoleButton.addEventListener("click", () => {
 projectTreeElement.addEventListener("click", (event) => {
 	const target = event.target as HTMLElement;
 
+	if (suppressSidebarClick) {
+		suppressSidebarClick = false;
+		return;
+	}
+
 	const projectToggleButton = target.closest<HTMLElement>("[data-project-toggle-id]");
 	if (projectToggleButton) {
 		toggleProjectCollapsed(projectToggleButton.dataset.projectToggleId!);
@@ -1033,113 +1048,197 @@ projectTreeElement.addEventListener("focusout", (event) => {
 	void commitTerminalRename(terminalId);
 });
 
-projectTreeElement.addEventListener("dragstart", (event) => {
+// Pointer-based sidebar drag-and-drop. This intentionally does NOT use the
+// HTML5 drag-and-drop API: in the Tauri WebKit webview the native gesture
+// proved unreliable (dragstart fires, but no further drag events reach the
+// page and the drop silently never lands), while plain pointer events always
+// flow. Hit-testing is coordinate-based, so mid-drag re-renders cannot break
+// the gesture either.
+projectTreeElement.addEventListener("pointerdown", (event) => {
+	if (!event.isPrimary || event.button !== 0) {
+		return;
+	}
+
+	if (sidebarPointerDrag) {
+		cancelSidebarPointerDrag();
+	}
+
 	const target = event.target as HTMLElement;
-	const projectDrag = target.closest<HTMLElement>("[data-project-drag-id]");
-	if (projectDrag) {
-		const projectId = projectDrag.dataset.projectDragId!;
-		if (editingProjectId === projectId) {
-			event.preventDefault();
+	const handle = resolveSidebarDragHandle(target);
+	if (!handle) {
+		return;
+	}
+
+	sidebarPointerDrag = {
+		...handle,
+		pointerId: event.pointerId,
+		startX: event.clientX,
+		startY: event.clientY,
+		active: false,
+		currentTarget: null,
+	};
+});
+
+window.addEventListener("pointermove", (event) => {
+	const drag = sidebarPointerDrag;
+	if (!drag || !event.isPrimary || event.pointerId !== drag.pointerId) {
+		return;
+	}
+
+	if (!drag.active) {
+		if (
+			Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) <
+			SIDEBAR_DRAG_THRESHOLD_PX
+		) {
 			return;
 		}
 
-		sidebarDragState = { kind: "project", id: projectId };
-		event.dataTransfer?.setData("text/plain", projectId);
-		if (event.dataTransfer) {
-			event.dataTransfer.effectAllowed = "move";
-		}
-		projectDrag.classList.add("dragging");
+		drag.active = true;
+		document.body.classList.add("sidebar-dragging");
+		markSidebarDragSource(drag);
 		hideContextMenu();
+	}
+
+	event.preventDefault();
+	updateSidebarPointerTarget(event.clientX, event.clientY);
+	autoScrollSidebar(event.clientY);
+});
+
+window.addEventListener("pointerup", (event) => {
+	const drag = sidebarPointerDrag;
+	if (!drag || !event.isPrimary || event.pointerId !== drag.pointerId) {
 		return;
 	}
 
-	const terminalDrag = target.closest<HTMLElement>("[data-terminal-drag-id]");
-	if (!terminalDrag) {
-		return;
+	const dropTarget = drag.active ? drag.currentTarget : null;
+	finishSidebarPointerDrag();
+	if (drag.active) {
+		// A real drag happened: swallow the click the browser is about to
+		// fire so dropping onto a row does not also select/activate it.
+		suppressSidebarClick = true;
+	}
+	if (dropTarget) {
+		void runUiAction("Reorder sidebar", () => applySidebarDrop(drag, dropTarget));
+	}
+});
+
+window.addEventListener("pointercancel", (event) => {
+	if (sidebarPointerDrag?.pointerId === event.pointerId) {
+		cancelSidebarPointerDrag();
+	}
+});
+
+window.addEventListener("blur", () => {
+	cancelSidebarPointerDrag();
+});
+
+document.addEventListener("keydown", (event) => {
+	if (event.key === "Escape") {
+		cancelSidebarPointerDrag();
+	}
+});
+
+function resolveSidebarDragHandle(
+	target: HTMLElement,
+): { kind: "project" | "terminal"; id: string; projectId: string } | null {
+	// Text inputs and the per-row action button keep their native behavior:
+	// drags never start from them.
+	if (target.closest("input, textarea, select, [data-project-new-console-id]")) {
+		return null;
 	}
 
-	const terminalId = terminalDrag.dataset.terminalDragId!;
-	const projectId = terminalDrag.dataset.terminalProjectId!;
+	const projectHandle = target.closest<HTMLElement>("[data-project-drag-id]");
+	if (projectHandle) {
+		const projectId = projectHandle.dataset.projectDragId!;
+		if (editingProjectId === projectId) {
+			return null;
+		}
+		return { kind: "project", id: projectId, projectId };
+	}
+
+	const terminalHandle = target.closest<HTMLElement>("[data-terminal-drag-id]");
+	if (!terminalHandle) {
+		return null;
+	}
+
+	const terminalId = terminalHandle.dataset.terminalDragId!;
 	if (editingTerminalId === terminalId) {
-		event.preventDefault();
-		return;
+		return null;
 	}
-
-	sidebarDragState = { kind: "terminal", id: terminalId, projectId };
-	event.dataTransfer?.setData("text/plain", terminalId);
-	if (event.dataTransfer) {
-		event.dataTransfer.effectAllowed = "move";
+	const projectId =
+		terminalHandle.dataset.terminalProjectId ??
+		terminalHandle
+			.closest<HTMLElement>("[data-project-node-id]")
+			?.dataset.projectNodeId ??
+		"";
+	if (!projectId) {
+		return null;
 	}
-	terminalDrag.classList.add("dragging");
-	hideContextMenu();
-});
+	return { kind: "terminal", id: terminalId, projectId };
+}
 
-projectTreeElement.addEventListener("dragenter", (event) => {
-	if (!sidebarDragState) {
-		return;
-	}
+function markSidebarDragSource(drag: SidebarPointerDrag): void {
+	const selector =
+		drag.kind === "project"
+			? `[data-project-drag-id="${CSS.escape(drag.id)}"]`
+			: `[data-terminal-drag-id="${CSS.escape(drag.id)}"]`;
+	projectTreeElement.querySelector(selector)?.classList.add("dragging");
+}
 
-	// Cancelling dragenter as well as dragover: some engines decide the
-	// drop-allowed feedback from the first event they see.
-	if (resolveSidebarDropTarget(event)) {
-		event.preventDefault();
-	}
-});
-
-projectTreeElement.addEventListener("dragover", (event) => {
-	if (!sidebarDragState) {
-		return;
-	}
-
-	const dropTarget = resolveSidebarDropTarget(event);
-	clearSidebarDropIndicators();
-	if (!dropTarget) {
-		return;
-	}
-
-	event.preventDefault();
-	if (event.dataTransfer) {
-		event.dataTransfer.dropEffect = "move";
-	}
-	dropTarget.element.classList.add(
-		dropTarget.placement === "before" ? "drop-before" : "drop-after",
-	);
-});
-
-projectTreeElement.addEventListener("dragleave", (event) => {
-	const nextTarget = event.relatedTarget as Node | null;
-	if (nextTarget && projectTreeElement.contains(nextTarget)) {
+function updateSidebarPointerTarget(clientX: number, clientY: number): void {
+	const drag = sidebarPointerDrag;
+	if (!drag?.active) {
 		return;
 	}
 
 	clearSidebarDropIndicators();
-});
+	const next = resolveSidebarDropTargetAt(clientX, clientY, drag);
+	drag.currentTarget = next;
+	if (next) {
+		next.element.classList.add(
+			next.placement === "before" ? "drop-before" : "drop-after",
+		);
+	}
+}
 
-projectTreeElement.addEventListener("drop", (event) => {
-	if (!sidebarDragState) {
+function autoScrollSidebar(clientY: number): void {
+	const scroller = projectTreeElement.parentElement;
+	if (!scroller || scroller.scrollHeight <= scroller.clientHeight) {
 		return;
 	}
 
-	const dropTarget = resolveSidebarDropTarget(event);
-	clearSidebarDropIndicators();
-	if (!dropTarget) {
-		return;
+	const rect = scroller.getBoundingClientRect();
+	const edge = 48;
+	const step = 14;
+	if (clientY < rect.top + edge) {
+		scroller.scrollTop -= step;
+	} else if (clientY > rect.bottom - edge) {
+		scroller.scrollTop += step;
 	}
+}
 
-	event.preventDefault();
-	void runUiAction("Reorder sidebar", () => applySidebarDrop(dropTarget));
-});
-
-projectTreeElement.addEventListener("dragend", () => {
-	sidebarDragState = null;
+function finishSidebarPointerDrag(): void {
+	sidebarPointerDrag = null;
+	document.body.classList.remove("sidebar-dragging");
 	clearSidebarDragStateClasses();
+	flushDeferredSidebarRender();
+}
+
+function cancelSidebarPointerDrag(): void {
+	if (!sidebarPointerDrag) {
+		return;
+	}
+	finishSidebarPointerDrag();
+}
+
+function flushDeferredSidebarRender(): void {
 	if (sidebarRenderDeferred) {
 		sidebarRenderDeferred = false;
 		renderTree();
 		renderInspector();
 		renderStatusBoard();
 	}
-});
+}
 
 projectTreeElement.addEventListener("contextmenu", (event) => {
 	const target = event.target as HTMLElement;
@@ -1490,42 +1589,53 @@ type SidebarDropTarget = {
 	element: HTMLElement;
 };
 
-function resolveSidebarDropTarget(event: DragEvent): SidebarDropTarget | null {
-	const target = event.target as HTMLElement;
-	if (sidebarDragState?.kind === "project") {
-		const projectNode = target.closest<HTMLElement>("[data-project-node-id]");
+type SidebarPointerDragTarget = {
+	kind: "project" | "terminal";
+	id: string;
+	projectId: string;
+};
+
+function resolveSidebarDropTargetAt(
+	clientX: number,
+	clientY: number,
+	drag: SidebarPointerDragTarget,
+): SidebarDropTarget | null {
+	const hit = document.elementFromPoint(clientX, clientY);
+	if (!(hit instanceof HTMLElement)) {
+		return null;
+	}
+	if (!projectTreeElement.contains(hit)) {
+		return null;
+	}
+
+	if (drag.kind === "project") {
+		const projectNode =
+			hit.closest<HTMLElement>("[data-project-node-id]");
 		if (!projectNode) {
-			return resolveProjectListEdgeTarget(event);
+			return resolveProjectListEdgeTarget(clientY, drag);
 		}
 
 		const projectId = projectNode.dataset.projectNodeId!;
-		if (projectId === sidebarDragState.id) {
+		if (projectId === drag.id) {
 			return null;
 		}
 
 		return {
 			kind: "project",
 			id: projectId,
-			placement: getDropPlacement(event, projectNode),
+			placement: getDropPlacement(clientY, projectNode),
 			element: projectNode,
 		};
 	}
 
-	if (sidebarDragState?.kind !== "terminal") {
-		return null;
-	}
-
-	const terminalNode = target.closest<HTMLElement>("[data-terminal-node-id]");
+	const terminalNode = hit.closest<HTMLElement>("[data-terminal-node-id]");
 	if (!terminalNode) {
-		return resolveSameProjectTerminalFallback(target);
+		return resolveSameProjectTerminalFallback(hit, drag);
 	}
 
 	const terminalId = terminalNode.dataset.terminalNodeId!;
 	const projectId = terminalNode.dataset.terminalProjectId!;
-	if (
-		terminalId === sidebarDragState.id ||
-		projectId !== sidebarDragState.projectId
-	) {
+	if (terminalId === drag.id || projectId !== drag.projectId) {
 		return null;
 	}
 
@@ -1533,7 +1643,7 @@ function resolveSidebarDropTarget(event: DragEvent): SidebarDropTarget | null {
 		kind: "terminal",
 		id: terminalId,
 		projectId,
-		placement: getDropPlacement(event, terminalNode),
+		placement: getDropPlacement(clientY, terminalNode),
 		element: terminalNode,
 	};
 }
@@ -1541,8 +1651,11 @@ function resolveSidebarDropTarget(event: DragEvent): SidebarDropTarget | null {
 /// Fallback for project drags landing on list padding (above the first or
 /// below the last project), where no project node is under the cursor:
 /// resolves to moving to the start/end of the list.
-function resolveProjectListEdgeTarget(event: DragEvent): SidebarDropTarget | null {
-	if (sidebarDragState?.kind !== "project") {
+function resolveProjectListEdgeTarget(
+	clientY: number,
+	drag: SidebarPointerDragTarget,
+): SidebarDropTarget | null {
+	if (drag.kind !== "project") {
 		return null;
 	}
 
@@ -1555,16 +1668,16 @@ function resolveProjectListEdgeTarget(event: DragEvent): SidebarDropTarget | nul
 
 	const first = nodes[0]!;
 	const last = nodes[nodes.length - 1]!;
-	if (event.clientY < first.getBoundingClientRect().top) {
+	if (clientY < first.getBoundingClientRect().top) {
 		const firstId = first.dataset.projectNodeId!;
-		if (firstId === sidebarDragState.id) {
+		if (firstId === drag.id) {
 			return null;
 		}
 		return { kind: "project", id: firstId, placement: "before", element: first };
 	}
 
 	const lastId = last.dataset.projectNodeId!;
-	if (lastId === sidebarDragState.id) {
+	if (lastId === drag.id) {
 		return null;
 	}
 	return { kind: "project", id: lastId, placement: "after", element: last };
@@ -1576,8 +1689,9 @@ function resolveProjectListEdgeTarget(event: DragEvent): SidebarDropTarget | nul
 /// not supported). Returns null when that resolves to a no-op.
 function resolveSameProjectTerminalFallback(
 	target: HTMLElement,
+	drag: SidebarPointerDragTarget,
 ): SidebarDropTarget | null {
-	if (sidebarDragState?.kind !== "terminal") {
+	if (drag.kind !== "terminal") {
 		return null;
 	}
 
@@ -1587,7 +1701,7 @@ function resolveSameProjectTerminalFallback(
 	}
 
 	const projectId = projectNode.dataset.projectNodeId!;
-	if (projectId !== sidebarDragState.projectId) {
+	if (projectId !== drag.projectId) {
 		return null;
 	}
 
@@ -1600,7 +1714,7 @@ function resolveSameProjectTerminalFallback(
 
 	const last = items[items.length - 1]!;
 	const lastId = last.dataset.terminalNodeId!;
-	if (lastId === sidebarDragState.id) {
+	if (lastId === drag.id) {
 		return null;
 	}
 
@@ -1614,11 +1728,11 @@ function resolveSameProjectTerminalFallback(
 }
 
 function getDropPlacement(
-	event: DragEvent,
+	clientY: number,
 	element: HTMLElement,
 ): "before" | "after" {
 	const rect = element.getBoundingClientRect();
-	return event.clientY < rect.top + rect.height / 2 ? "before" : "after";
+	return clientY < rect.top + rect.height / 2 ? "before" : "after";
 }
 
 function clearSidebarDropIndicators(): void {
@@ -1637,28 +1751,27 @@ function clearSidebarDragStateClasses(): void {
 		});
 }
 
-async function applySidebarDrop(dropTarget: SidebarDropTarget): Promise<void> {
-	if (!sidebarDragState || sidebarDragState.kind !== dropTarget.kind) {
+async function applySidebarDrop(
+	drag: SidebarPointerDragTarget,
+	dropTarget: SidebarDropTarget,
+): Promise<void> {
+	if (drag.kind !== dropTarget.kind) {
 		return;
 	}
 
-	if (dropTarget.kind === "project" && sidebarDragState.kind === "project") {
+	if (dropTarget.kind === "project") {
 		await reorderProjectsAroundTarget(
-			sidebarDragState.id,
+			drag.id,
 			dropTarget.id,
 			dropTarget.placement,
 		);
 		return;
 	}
 
-	if (
-		dropTarget.kind === "terminal" &&
-		sidebarDragState.kind === "terminal" &&
-		dropTarget.projectId
-	) {
+	if (dropTarget.projectId) {
 		await reorderTerminalsAroundTarget(
-			sidebarDragState.projectId,
-			sidebarDragState.id,
+			drag.projectId,
+			drag.id,
 			dropTarget.id,
 			dropTarget.placement,
 		);
@@ -2436,7 +2549,7 @@ async function selectTerminal(terminalId: string): Promise<void> {
 }
 
 function renderTree(): void {
-	if (sidebarDragState) {
+	if (sidebarPointerDrag?.active) {
 		sidebarRenderDeferred = true;
 		return;
 	}
@@ -2538,8 +2651,7 @@ function renderTree(): void {
 											<li
 												data-terminal-node-id="${terminal.id}"
 												data-terminal-project-id="${terminal.projectId}"
-												data-terminal-drag-id="${terminal.id}"
-												draggable="true">
+												data-terminal-drag-id="${terminal.id}">
 												<button
 													type="button"
 													class="tree-terminal-button ${selection?.kind === "terminal" && selection.id === terminal.id ? "active" : ""}"
@@ -2566,8 +2678,7 @@ function renderTree(): void {
 						<div
 							class="tree-project-row"
 							data-project-row-id="${project.id}"
-							data-project-drag-id="${project.id}"
-							draggable="true">
+							data-project-drag-id="${project.id}">
 							${projectLabel}
 							<button
 								type="button"

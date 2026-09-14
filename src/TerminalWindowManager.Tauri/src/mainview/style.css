@@ -310,14 +310,19 @@ body[data-platform="macos"] .titlebar-controls {
 	box-shadow: 0 0 0 1px rgba(94, 160, 255, 0.22);
 }
 
-.tree-project-row[draggable="true"],
-li[data-terminal-drag-id][draggable="true"] {
+.tree-project-row[data-project-drag-id],
+li[data-terminal-drag-id] {
 	cursor: grab;
+	touch-action: pan-y;
 }
 
-.tree-project-row[draggable="true"]:active,
-li[data-terminal-drag-id][draggable="true"]:active {
-	cursor: grabbing;
+/* While a pointer drag is active, show grabbing everywhere and suppress text
+   selection so the gesture stays clean. */
+body.sidebar-dragging,
+body.sidebar-dragging * {
+	cursor: grabbing !important;
+	user-select: none;
+	-webkit-user-select: none;
 }
 
 .tree-project-row {
