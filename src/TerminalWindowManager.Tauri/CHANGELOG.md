@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.6.0](https://github.com/klinki/project-based-terminal-manager/compare/v0.5.0...v0.6.0) (2026-09-14)
+
+
+### Features
+
+* Add bundle copyright and dynamic About dialog year ([620fc93](https://github.com/klinki/project-based-terminal-manager/commit/620fc93104cde7b16cf8d47460a70fe3390128d7))
+* Add native macOS crash dialog ([04a5c70](https://github.com/klinki/project-based-terminal-manager/commit/04a5c70fd64c8b6e0e475c457d8641b522fc6dc6))
+* Add native macOS window integration ([30471bd](https://github.com/klinki/project-based-terminal-manager/commit/30471bd1758b257099577659e898e2a476dbf6c2))
+* Add native Preferences menu item (Cmd+,) on macOS ([325530d](https://github.com/klinki/project-based-terminal-manager/commit/325530d0edc56eee16c18cbbf6e7f4e43d911177))
+* Add POSIX shell hooks for cwd tracking and failure detection ([ea2d9a7](https://github.com/klinki/project-based-terminal-manager/commit/ea2d9a7e186e4ad272a3d4037cedc2a7a1285b2c))
+* Bounce the Dock icon when a console needs attention ([5b69cc1](https://github.com/klinki/project-based-terminal-manager/commit/5b69cc15f82831d1b04b031a3317d685d9a0b832))
+* Confirm before quitting via Cmd+Q or menu Quit ([b9cbf4a](https://github.com/klinki/project-based-terminal-manager/commit/b9cbf4ad6909b2da7f9ccadcf008857b936eafe7))
+* Mirror terminal progress to the macOS Dock tile ([f6796ef](https://github.com/klinki/project-based-terminal-manager/commit/f6796efe94166163cd10dbc3b66687e7c784f98f))
+* Parse OSC 9;4 progress sequences in Unix PTY host ([ca012c9](https://github.com/klinki/project-based-terminal-manager/commit/ca012c9d56ac8ad0b875283203b76acdb7828761))
+* Port Tauri terminal host to macOS ([98a3b48](https://github.com/klinki/project-based-terminal-manager/commit/98a3b488a1882cae61e144e99c80688016872f60))
+
+
+### Bug Fixes
+
+* Close windows through the backend so sessions stop first ([6cd6c17](https://github.com/klinki/project-based-terminal-manager/commit/6cd6c17a6807d432990402f75c8fac1351481232))
+* Harden Unix PTY host diagnostics and shutdown output ([8e185f2](https://github.com/klinki/project-based-terminal-manager/commit/8e185f20689900ad4fc6ed5eb83cebd260f5698f))
+* Kill Unix shell process group with SIGKILL escalation ([d3d3bdc](https://github.com/klinki/project-based-terminal-manager/commit/d3d3bdc444999e693d2a34a76b4837c8b24d2434))
+* Make sidebar drag-and-drop reliable on macOS ([1e1cc1d](https://github.com/klinki/project-based-terminal-manager/commit/1e1cc1d5dd5e4bcd3a5a0a494c7067f9e82f8964))
+* Replace HTML5 sidebar DnD with pointer-based dragging ([9655a9c](https://github.com/klinki/project-based-terminal-manager/commit/9655a9c16db062953ac7933f87dea228ec50e194))
+* Restore sidebar reorder and renderer log persistence ([42da9ea](https://github.com/klinki/project-based-terminal-manager/commit/42da9ea0445085552a748d62d5f94bfabbb7515a))
+* Treat macOS Ctrl+click as right-click in sidebar gestures ([e7fdabb](https://github.com/klinki/project-based-terminal-manager/commit/e7fdabbfd0ff1cbc694b2ceff140b66d415460c6))
+
 ## [0.5.0](https://github.com/klinki/project-based-terminal-manager/compare/v0.4.0...v0.5.0) (2026-05-25)
 
 
