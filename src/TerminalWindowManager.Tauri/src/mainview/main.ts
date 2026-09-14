@@ -232,6 +232,9 @@ let suppressSidebarClick = false;
 let sidebarRenderDeferred = false;
 let closeConfirmationInProgress = false;
 let quitConfirmationInProgress = false;
+// Set once the user approves closing: lets the backend-initiated close pass
+// through onCloseRequested instead of looping back into confirmation.
+let windowCloseConfirmed = false;
 
 const terminalViews = new Map<string, TerminalView>();
 const terminalOutputBuffers = new Map<string, string[]>();
@@ -916,6 +919,9 @@ winClose.addEventListener("click", () => {
 
 void getCurrentWindow()
 	.onCloseRequested((event) => {
+		if (windowCloseConfirmed) {
+			return;
+		}
 		event.preventDefault();
 		void runUiAction("Close application", requestApplicationClose);
 	})
@@ -2118,20 +2124,38 @@ async function requestApplicationClose(): Promise<void> {
 
 	closeConfirmationInProgress = true;
 	try {
-		const confirmed = await showConfirmationDialog({
-			title: "Close application?",
-			message:
-				"Close Terminal Window Manager? Running consoles and active terminal sessions will be stopped.",
-			confirmLabel: "Close application",
-		});
-		if (!confirmed) {
-			return;
+		// Only interrupt the user when something would actually be lost.
+		if (hasActiveTerminalSessions()) {
+			const confirmed = await showConfirmationDialog({
+				title: "Close application?",
+				message:
+					"Close Terminal Window Manager? Running consoles and active terminal sessions will be stopped.",
+				confirmLabel: "Close application",
+			});
+			if (!confirmed) {
+				return;
+			}
 		}
 
-		await getCurrentWindow().destroy();
+		// Close through the backend so live sessions are stopped first
+		// instead of orphaning helper processes. The backend close retriggers
+		// onCloseRequested, which lets an approved close pass through.
+		windowCloseConfirmed = true;
+		try {
+			await getRendererRpc().proxy.request.windowClose({});
+		} catch (error) {
+			windowCloseConfirmed = false;
+			throw error;
+		}
 	} finally {
 		closeConfirmationInProgress = false;
 	}
+}
+
+function hasActiveTerminalSessions(): boolean {
+	return state.terminals.some(
+		(terminal) => terminal.status === "running" || terminal.status === "starting",
+	);
 }
 
 function showConfirmationDialog(options: {
