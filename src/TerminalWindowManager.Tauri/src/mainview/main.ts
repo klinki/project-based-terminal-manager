@@ -175,6 +175,15 @@ if (IS_MACOS) {
 	document.body.dataset.platform = "macos";
 }
 
+// macOS Ctrl+left-click is a simulated right-click: it produces a regular
+// `click` (button 0 with ctrlKey) in addition to `contextmenu`, unlike a
+// physical right-click. Gesture handling must treat it as a right-click so
+// the click belonging to the same gesture does not instantly dismiss the
+// context menu it just opened (or start drags/selections).
+function isSimulatedRightClick(event: MouseEvent): boolean {
+	return IS_MACOS && event.ctrlKey && event.button === 0;
+}
+
 let state: AppState = {
 	defaults: {
 		defaultCwd: "",
@@ -745,6 +754,10 @@ titlebar.addEventListener("pointerdown", (event) => {
 		return;
 	}
 
+	if (isSimulatedRightClick(event)) {
+		return;
+	}
+
 	const target = event.target as HTMLElement;
 	if (isTitlebarInteractiveTarget(target)) {
 		return;
@@ -927,6 +940,10 @@ projectTreeElement.addEventListener("click", (event) => {
 		return;
 	}
 
+	if (isSimulatedRightClick(event)) {
+		return;
+	}
+
 	const projectToggleButton = target.closest<HTMLElement>("[data-project-toggle-id]");
 	if (projectToggleButton) {
 		toggleProjectCollapsed(projectToggleButton.dataset.projectToggleId!);
@@ -961,6 +978,10 @@ projectTreeElement.addEventListener("click", (event) => {
 
 projectTreeElement.addEventListener("dblclick", (event) => {
 	const target = event.target as HTMLElement;
+	if (isSimulatedRightClick(event)) {
+		return;
+	}
+
 	const projectButton = target.closest<HTMLButtonElement>("[data-project-id]");
 	if (!projectButton) {
 		return;
@@ -1056,6 +1077,10 @@ projectTreeElement.addEventListener("focusout", (event) => {
 // the gesture either.
 projectTreeElement.addEventListener("pointerdown", (event) => {
 	if (!event.isPrimary || event.button !== 0) {
+		return;
+	}
+
+	if (isSimulatedRightClick(event)) {
 		return;
 	}
 
@@ -1355,6 +1380,10 @@ window.addEventListener("click", (event) => {
 		closeSettingsShellMenu();
 	}
 	if (sidebarContextMenu.contains(target)) {
+		return;
+	}
+
+	if (isSimulatedRightClick(event)) {
 		return;
 	}
 
