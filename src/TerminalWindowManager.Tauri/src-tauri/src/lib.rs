@@ -2,6 +2,8 @@ mod backend;
 mod crash_dialog;
 mod crash_reporting;
 mod diagnostics;
+#[cfg(target_os = "macos")]
+mod menu;
 mod models;
 #[cfg(unix)]
 pub mod pty_host;
@@ -281,12 +283,13 @@ pub fn run() {
                 .build()
                 .map_err(|error| error.to_string())?;
 
-            // Native App/Edit/Window/View menus on macOS so standard shortcuts
-            // (Cmd+Q/W/M, copy/paste, fullscreen) behave like other Mac apps.
+            // Native App/File/Edit/View/Window/Help menus on macOS so standard
+            // shortcuts (Cmd+Q/W/M/comma, copy/paste, fullscreen) behave like
+            // other Mac apps.
             #[cfg(target_os = "macos")]
             {
                 let menu =
-                    tauri::menu::Menu::default(app.handle()).map_err(|error| error.to_string())?;
+                    menu::build_macos_menu(app.handle()).map_err(|error| error.to_string())?;
                 app.set_menu(menu).map_err(|error| error.to_string())?;
             }
 
@@ -318,6 +321,14 @@ pub fn run() {
             log_renderer_event,
             window_close,
         ]);
+
+    #[cfg(target_os = "macos")]
+    let builder = builder.on_menu_event(|app_handle, event| {
+        if event.id().as_ref() == menu::PREFERENCES_MENU_ID {
+            use tauri::Emitter;
+            let _ = app_handle.emit(menu::OPEN_SETTINGS_EVENT, ());
+        }
+    });
 
     match builder.build(context) {
         Ok(app) => {

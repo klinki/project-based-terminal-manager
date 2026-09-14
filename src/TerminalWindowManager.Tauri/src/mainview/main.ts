@@ -1,6 +1,7 @@
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { listen } from "@tauri-apps/api/event";
 import { Electroview } from "./electroview";
 import "./style.css";
 import type {
@@ -923,6 +924,20 @@ void getCurrentWindow()
 			updateStatus: false,
 		});
 	});
+
+// Native App menu Preferences item (macOS Cmd+,) opens the same settings
+// dialog as the sidebar button. Emitted by the backend menu handler.
+listen("open-settings", () => {
+	if (settingsDialog.open) {
+		return;
+	}
+	void runUiAction("Open settings", openSettingsDialog);
+}).catch((error) => {
+	reportRendererIssue("warn", "register-open-settings", error, {
+		detail: "Failed to register the native Preferences menu handler.",
+		updateStatus: false,
+	});
+});
 
 newProjectButton.addEventListener("click", () => {
 	void runUiAction("Create project", createProjectAndBeginRename);
