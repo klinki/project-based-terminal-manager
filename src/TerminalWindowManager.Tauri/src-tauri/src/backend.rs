@@ -12,14 +12,18 @@ use std::time::{Duration, Instant};
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+#[cfg(windows)]
+use tauri::path::BaseDirectory;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::diagnostics::{
-    append_app_log_entry, append_output_chunk, classify_posix_shell,
-    create_posix_bash_sh_hook_script, create_posix_zsh_hook_script,
-    create_power_shell_bootstrap_script, create_recent_output_excerpt,
-    create_session_diagnostics_paths, create_zshenv_shim, create_zshrc_shim, PosixShellKind,
-    SessionDiagnosticsPaths,
+    append_app_log_entry, append_output_chunk, create_power_shell_bootstrap_script,
+    create_recent_output_excerpt, create_session_diagnostics_paths, SessionDiagnosticsPaths,
+};
+#[cfg(unix)]
+use crate::diagnostics::{
+    classify_posix_shell, create_posix_bash_sh_hook_script, create_posix_zsh_hook_script,
+    create_zshenv_shim, create_zshrc_shim, PosixShellKind,
 };
 use crate::models::{
     AppState, ProjectRecord, TerminalActivity, TerminalActivityPhase, TerminalCommandFailure,
