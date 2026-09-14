@@ -19,10 +19,13 @@ pub const OPEN_SETTINGS_EVENT: &str = "open-settings";
 pub fn build_macos_menu<R: Runtime>(handle: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     let package_info = handle.package_info();
     let config = handle.config();
+    // Year is resolved at runtime so the About dialog never shows a stale
+    // year, regardless of when the bundle was built.
+    let copyright_year = chrono::Utc::now().format("%Y");
     let about_metadata = AboutMetadata {
         name: Some(package_info.name.clone()),
         version: Some(package_info.version.to_string()),
-        copyright: config.bundle.copyright.clone(),
+        copyright: Some(format!("Copyright © {} Klinki", copyright_year)),
         authors: config.bundle.publisher.clone().map(|publisher| vec![publisher]),
         ..Default::default()
     };

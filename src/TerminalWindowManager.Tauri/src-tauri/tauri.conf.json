@@ -27,6 +27,7 @@
   "bundle": {
     "active": true,
     "category": "DeveloperTool",
+    "copyright": "Copyright © Klinki",
     "shortDescription": "Project-based terminal manager",
     "macOS": {
       "minimumSystemVersion": "11.0"
