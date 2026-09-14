@@ -1214,6 +1214,10 @@ impl SessionManager {
 
         let activity = Self::activity_for_progress(&progress_info);
 
+        if activity.phase == TerminalActivityPhase::Attention {
+            self.bounce_dock_for_attention(&terminal.id);
+        }
+
         {
             let mut state = self.state.lock().map_err(|error| error.to_string())?;
             if let Some(record) = state
@@ -1344,6 +1348,10 @@ impl SessionManager {
         if self.try_retry_with_fallback_cwd(terminal, live_session, &event)? {
             return Ok(());
         }
+
+        // Bounces the Dock on macOS when this terminal newly needs attention
+        // (checked against the still-previous phase inside).
+        self.bounce_dock_for_attention(&terminal.id);
 
         let recent_output_excerpt = self.get_recent_output_excerpt(live_session);
         let stderr_excerpt = {
@@ -2108,6 +2116,53 @@ impl SessionManager {
     #[cfg(not(target_os = "windows"))]
     fn sync_taskbar_progress(&self, _snapshot: &AppState) {}
 
+    /// Returns true when an attention transition should bounce the Dock:
+    /// entering Attention from any other phase. Repeated Attention states
+    /// must not re-bounce.
+    fn should_bounce_dock_for_attention(
+        previous: TerminalActivityPhase,
+        next: TerminalActivityPhase,
+    ) -> bool {
+        next == TerminalActivityPhase::Attention && previous != TerminalActivityPhase::Attention
+    }
+
+    /// Bounces the Dock icon when a terminal newly needs attention and the
+    /// window is not focused. Must be called BEFORE the mutation that sets
+    /// Attention: the transition check compares against the still-previous
+    /// phase. No-op when already focused, when already in Attention, when
+    /// the window is gone, and off macOS. Failures are ignored, never panic.
+    #[cfg(target_os = "macos")]
+    fn bounce_dock_for_attention(&self, terminal_id: &str) {
+        let previous = self
+            .state
+            .lock()
+            .ok()
+            .and_then(|state| {
+                state
+                    .terminals
+                    .iter()
+                    .find(|terminal| terminal.id == terminal_id)
+                    .map(|terminal| terminal.activity.phase)
+            });
+        let Some(previous) = previous else {
+            return;
+        };
+        if !Self::should_bounce_dock_for_attention(previous, TerminalActivityPhase::Attention) {
+            return;
+        }
+
+        let Some(window) = self.app_handle.get_webview_window("main") else {
+            return;
+        };
+        if window.is_focused().unwrap_or(true) {
+            return;
+        }
+        let _ = window.request_user_attention(Some(tauri::UserAttentionType::Informational));
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn bounce_dock_for_attention(&self, _terminal_id: &str) {}
+
     fn create_helper_path_candidates(app_handle: &AppHandle) -> Vec<PathBuf> {
         let mut candidates = Vec::new();
         let mut push_candidate = |candidate: PathBuf| {
@@ -2232,6 +2287,9 @@ impl SessionManager {
         session_id: &str,
         message: String,
     ) -> Result<(), String> {
+        // Bounces the Dock on macOS when this terminal newly needs attention
+        // (checked against the still-previous phase inside).
+        self.bounce_dock_for_attention(&terminal.id);
         {
             let mut state = self.state.lock().map_err(|error| error.to_string())?;
             if let Some(record) = state
@@ -3018,9 +3076,11 @@ mod tests {
     use super::{
         aggregate_taskbar_progress, dock_progress_bar_state, extract_missing_working_directory,
         next_launch_cwd_attempt, taskbar_progress_from_terminal, unique_terminal_name,
-        LaunchCwdStrategy, TaskbarProgressSnapshot, TaskbarProgressStatus,
+        LaunchCwdStrategy, SessionManager, TaskbarProgressSnapshot, TaskbarProgressStatus,
     };
-    use crate::models::{TerminalProgressInfo, TerminalProgressState, TerminalRecord};
+    use crate::models::{
+        TerminalActivityPhase, TerminalProgressInfo, TerminalProgressState, TerminalRecord,
+    };
     use tauri::window::ProgressBarStatus;
 
     #[test]
@@ -3247,6 +3307,20 @@ mod tests {
 
         assert!(matches!(payload.status, Some(ProgressBarStatus::Normal)));
         assert_eq!(payload.progress, Some(42));
+    }
+
+    #[test]
+    fn dock_bounce_only_on_entering_attention() {
+        use TerminalActivityPhase::*;
+        let bounce = SessionManager::should_bounce_dock_for_attention;
+        assert!(bounce(Idle, Attention));
+        assert!(bounce(Working, Attention));
+        assert!(bounce(Waiting, Attention));
+        assert!(bounce(Streaming, Attention));
+        assert!(!bounce(Attention, Attention));
+        assert!(!bounce(Attention, Idle));
+        assert!(!bounce(Idle, Idle));
+        assert!(!bounce(Working, Waiting));
     }
 
     #[test]
