@@ -207,6 +207,7 @@ export type TerminalManagerRpc = {
 				params: Record<string, never>,
 			) => Promise<{ ok: boolean }>;
 			windowClose: (params: Record<string, never>) => Promise<{ ok: boolean }>;
+			quitApplication: (params: Record<string, never>) => Promise<{ ok: boolean }>;
 			stopAllSessions: (params?: Record<string, never>) => Promise<{ ok: boolean }>;
 		};
 	};

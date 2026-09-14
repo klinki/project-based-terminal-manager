@@ -11,7 +11,8 @@ pub mod pty_host;
 mod windows_keyboard_guard;
 
 use backend::SessionManager;
-use tauri::{Manager, RunEvent, State, WebviewWindow, WebviewWindowBuilder};
+use std::sync::atomic::{AtomicBool, Ordering};
+use tauri::{AppHandle, Manager, RunEvent, State, WebviewWindow, WebviewWindowBuilder};
 
 #[tauri::command]
 fn get_initial_state(manager: State<'_, SessionManager>) -> Result<models::AppState, String> {
@@ -216,6 +217,28 @@ fn window_close(
     Ok(serde_json::json!({ "ok": true }))
 }
 
+#[tauri::command]
+fn quit_application(
+    app: AppHandle,
+    quit_confirmed: State<'_, AtomicBool>,
+    manager: State<'_, SessionManager>,
+) -> Result<serde_json::Value, String> {
+    // Mark the quit confirmed BEFORE exiting: AppHandle::exit re-triggers
+    // ExitRequested, which must be allowed through this time instead of
+    // asking again.
+    quit_confirmed.store(true, Ordering::SeqCst);
+    manager.stop_all_sessions()?;
+    app.exit(0);
+    Ok(serde_json::json!({ "ok": true }))
+}
+
+/// Decides whether an exit request needs frontend confirmation: only when
+/// the quit was not already confirmed through `quit_application` and a
+/// window exists that can actually show the dialog.
+fn should_confirm_quit(quit_confirmed: bool, has_windows: bool) -> bool {
+    !quit_confirmed && has_windows
+}
+
 pub fn run() {
     let context = tauri::generate_context!();
     let fallback_app_data_dir =
@@ -257,6 +280,7 @@ pub fn run() {
 
             let session_manager = SessionManager::new(app.handle().clone(), metadata_path)?;
             app.manage(session_manager);
+            app.manage(AtomicBool::new(false));
 
             // The main window is declared with `create: false` in
             // tauri.conf.json so each platform can apply its own chrome here.
@@ -320,6 +344,7 @@ pub fn run() {
             stop_all_sessions,
             log_renderer_event,
             window_close,
+            quit_application,
         ]);
 
     #[cfg(target_os = "macos")]
@@ -332,13 +357,26 @@ pub fn run() {
 
     match builder.build(context) {
         Ok(app) => {
-            // Gracefully stop PTY sessions on Cmd+Q / menu Quit, matching the
-            // custom close-button path.
+            // Cmd+Q / Dock Quit / menu Quit arrive here. Like the window
+            // close button, quitting asks for confirmation first — but the
+            // dialog lives in the frontend, so prevent the exit and ask.
+            // Sessions are stopped either way before the process goes down.
             app.run(|app_handle, event| {
-                if let RunEvent::ExitRequested { .. } = event {
-                    if let Some(manager) = app_handle.try_state::<SessionManager>() {
-                        let _ = manager.stop_all_sessions();
+                if let RunEvent::ExitRequested { api, .. } = event {
+                    let quit_confirmed = app_handle
+                        .try_state::<AtomicBool>()
+                        .map(|flag| flag.load(Ordering::SeqCst))
+                        .unwrap_or(true);
+                    let has_windows = !app_handle.webview_windows().is_empty();
+                    if !should_confirm_quit(quit_confirmed, has_windows) {
+                        if let Some(manager) = app_handle.try_state::<SessionManager>() {
+                            let _ = manager.stop_all_sessions();
+                        }
+                        return;
                     }
+                    api.prevent_exit();
+                    use tauri::Emitter;
+                    let _ = app_handle.emit("confirm-quit-requested", ());
                 }
             });
         }
@@ -381,4 +419,21 @@ fn handle_build_failure(fallback_app_data_dir: &std::path::Path, detail: &str) {
         crash_snapshot_path: crash_snapshot_path.as_deref(),
     });
     eprintln!("Terminal Window Manager Tauri failed: {}", detail);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_confirm_quit;
+
+    #[test]
+    fn quit_confirmation_only_when_unconfirmed_with_windows() {
+        // Fresh quit with a visible window: ask.
+        assert!(should_confirm_quit(false, true));
+        // Already confirmed via quit_application: proceed.
+        assert!(!should_confirm_quit(true, true));
+        // No window can show the dialog (e.g. Dock Quit after closing the
+        // window): proceed without asking.
+        assert!(!should_confirm_quit(false, false));
+        assert!(!should_confirm_quit(true, false));
+    }
 }

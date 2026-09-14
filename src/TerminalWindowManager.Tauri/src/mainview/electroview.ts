@@ -83,6 +83,7 @@ function createRpcBridge(): TerminalManagerRpc {
 				windowToggleFullscreen: () =>
 					invoke<{ ok: boolean }>("window_toggle_fullscreen"),
 				windowClose: () => invoke<{ ok: boolean }>("window_close"),
+				quitApplication: () => invoke<{ ok: boolean }>("quit_application"),
 				stopAllSessions: () => invoke<{ ok: boolean }>("stop_all_sessions"),
 			},
 		},

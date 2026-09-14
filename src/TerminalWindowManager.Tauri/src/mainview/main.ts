@@ -231,6 +231,7 @@ let suppressSidebarClick = false;
 // work until the drag finishes and the pending render is flushed there.
 let sidebarRenderDeferred = false;
 let closeConfirmationInProgress = false;
+let quitConfirmationInProgress = false;
 
 const terminalViews = new Map<string, TerminalView>();
 const terminalOutputBuffers = new Map<string, string[]>();
@@ -938,6 +939,41 @@ listen("open-settings", () => {
 		updateStatus: false,
 	});
 });
+
+// Backend asks for quit confirmation (Cmd+Q / Dock Quit / menu Quit): show
+// the same confirmation as the window close path, then quit explicitly so
+// sessions are stopped first.
+listen("confirm-quit-requested", () => {
+	void runUiAction("Confirm quit", confirmQuitRequested);
+}).catch((error) => {
+	reportRendererIssue("warn", "register-confirm-quit", error, {
+		detail: "Failed to register the quit confirmation handler.",
+		updateStatus: false,
+	});
+});
+
+async function confirmQuitRequested(): Promise<void> {
+	if (quitConfirmationInProgress || closeConfirmationInProgress) {
+		return;
+	}
+
+	quitConfirmationInProgress = true;
+	try {
+		const confirmed = await showConfirmationDialog({
+			title: "Quit application?",
+			message:
+				"Quit Terminal Window Manager? Running consoles and active terminal sessions will be stopped.",
+			confirmLabel: "Quit application",
+		});
+		if (!confirmed) {
+			return;
+		}
+
+		await getRendererRpc().proxy.request.quitApplication({});
+	} finally {
+		quitConfirmationInProgress = false;
+	}
+}
 
 newProjectButton.addEventListener("click", () => {
 	void runUiAction("Create project", createProjectAndBeginRename);

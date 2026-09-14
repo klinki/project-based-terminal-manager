@@ -19,6 +19,7 @@ commands.allow = [
   "window_maximize",
   "window_toggle_fullscreen",
   "window_close",
+  "quit_application",
   "stop_all_sessions",
   "update_defaults",
   "set_project_default_cwd",
