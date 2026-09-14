@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.1](https://github.com/klinki/project-based-terminal-manager/compare/v0.6.0...v0.6.1) (2026-09-14)
+
+
+### Bug Fixes
+
+* Fix Windows build and add CI coverage ([0b867d3](https://github.com/klinki/project-based-terminal-manager/commit/0b867d39e1416158a06de00a07e59d551ffa4a35))
+
 ## [0.6.0](https://github.com/klinki/project-based-terminal-manager/compare/v0.5.0...v0.6.0) (2026-09-14)
 
 
